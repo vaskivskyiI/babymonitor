@@ -1,0 +1,15 @@
+version: "3"
+services:
+  babymonitor:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: babymonitor:latest
+    container_name: babymonitor
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      - DB_PATH=/data/babymonitor.db

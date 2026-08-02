@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+data/*.db
+data/*.db-journal
+
+# personal reference scripts for other projects, not part of this app
+sh_examples/
