@@ -81,8 +81,57 @@ function choreType(key) {
   return state.choreTypes.find((c) => c.key === key);
 }
 
+function fmtAge(days) {
+  if (days == null) return null;
+  if (days < 0) return `due in ${Math.abs(days)}d`;
+  if (days < 14) return `${days}d`;
+  if (days < 70) {
+    const w = Math.floor(days / 7);
+    const d = days % 7;
+    return d ? `${w}w ${d}d` : `${w}w`;
+  }
+  const months = days / 30.44;
+  return `${months.toFixed(months < 10 ? 1 : 0)}mo`;
+}
+
+function renderBabyInfoBar(profile, statuses) {
+  const bar = document.getElementById("baby-info-bar");
+  const weightStatus = statuses.find((s) => s.chore_type === "weight");
+  const heightStatus = statuses.find((s) => s.chore_type === "height");
+  const chips = [];
+
+  const ageText = profile && fmtAge(profile.age_days);
+  if (ageText) chips.push(`<div class="info-chip"><span class="info-val">${ageText}</span><span class="info-lbl">old</span></div>`);
+
+  const w = weightStatus?.last_event?.data?.weight_g;
+  if (w != null) {
+    chips.push(
+      `<div class="info-chip"><span class="info-val">${(w / 1000).toFixed(2)}kg</span><span class="info-lbl">weight</span></div>`
+    );
+  }
+
+  const h = heightStatus?.last_event?.data?.height_cm;
+  if (h != null) {
+    chips.push(`<div class="info-chip"><span class="info-val">${h}cm</span><span class="info-lbl">height</span></div>`);
+  }
+
+  if (!chips.length) {
+    bar.classList.add("hidden");
+    bar.innerHTML = "";
+    return;
+  }
+  bar.classList.remove("hidden");
+  const name = profile && profile.name;
+  bar.innerHTML = `
+    ${name ? `<div class="baby-name">👶 ${name}</div>` : ""}
+    <div class="info-chips">${chips.join("")}</div>
+  `;
+}
+
 async function loadDashboard() {
-  const statuses = await api("/api/status");
+  const [statuses, profile] = await Promise.all([api("/api/status"), api("/api/profile")]);
+  state.profile = profile;
+  renderBabyInfoBar(profile, statuses);
   const container = document.getElementById("cards");
   container.innerHTML = "";
   statuses.forEach((s) => {

@@ -36,8 +36,9 @@ class FeedingChoreType(ChoreType):
                     label="Type",
                     type="select",
                     required=True,
-                    default="breast_left",
+                    default="breast",
                     options=[
+                        FieldOption(value="breast", label="Breast"),
                         FieldOption(value="breast_left", label="Breast (left)"),
                         FieldOption(value="breast_right", label="Breast (right)"),
                         FieldOption(value="formula", label="Formula"),

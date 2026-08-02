@@ -9,18 +9,25 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
 - **Diaper changes**: mark pee / poop / both, plus separate flags for
   "peed during the change" / "pooped during the change".
 - **Feeding**: a feeding is a *session* you build up as it happens. Add as
-  many timestamped checkpoints as you like (breast left/right or formula,
-  each with an optional baby weight and/or amount) while the feeding is
-  in progress - switching breasts, topping up with formula, etc. Total
-  breast milk (ml) is auto-calculated from weight gain across the
-  checkpoints (or from manually-entered amounts if you don't weigh), and
-  formula amount is summed separately. The dashboard offers "+ Add
-  checkpoint" instead of "+ Log now" while a feeding is still open (within
-  a configurable session window, default 45 min since the last
-  checkpoint), and "+ New" to start a separate feeding anyway.
+  many timestamped checkpoints as you like (breast - either side or
+  unspecified - or formula, each with an optional baby weight and/or
+  amount) while the feeding is in progress - switching breasts, topping
+  up with formula, etc. Total breast milk (ml) is auto-calculated from
+  weight gain between checkpoints - e.g. weigh before, feed one or two
+  breasts, weigh after, and the difference becomes the amount (or from
+  manually-entered amounts if you don't weigh); formula amount is summed
+  separately. The dashboard offers "+ Add checkpoint" instead of "+ Log
+  now" while a feeding is still open (within a configurable session
+  window, default 45 min since the last checkpoint), and "+ New" to
+  start a separate feeding anyway.
 - **Sleep**: tap "Start Sleep" / "End Sleep" - duration is calculated
   automatically from the two timestamps, no manual entry.
-- **Weight**: quick weigh-in log (grams + optional notes).
+- **Weight** and **Height**: quick weigh-in / measurement log.
+- **Probiotic** (or any once-a-day supplement): a single tap logs it
+  given; the dashboard tracks the once-per-day interval and flags it
+  overdue automatically, same as any other reminder.
+- **Baby info bar**: the Dashboard leads with the baby's name, current
+  age, latest weight and latest height at a glance.
 - **Feeding calculator**: on the Stats tab, suggested amount per
   feed/day, feeds per day, and interval between feeds for the baby's
   current age (and a weight-based formula estimate if a recent weight is
@@ -50,7 +57,8 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
 - **Fully modular**: chore types are plugins under `app/chore_types/`.
   The frontend renders forms and charts generically from each type's
   field definitions - adding a new chore type requires no frontend
-  changes. Built-in types: `diaper`, `feeding`, `sleep`, `pumping`, `weight`.
+  changes. Built-in types: `diaper`, `feeding`, `sleep`, `pumping`,
+  `weight`, `height`, `probiotic`.
 
 ## Run with Podman
 
@@ -149,7 +157,9 @@ rest:
         state_class: measurement
 ```
 
-Copy the `diaper` block's pattern for `sleep` and `pumping`, or any
+Copy the `diaper` block's pattern for `sleep`, `pumping`, `height`
+(`value_json.last_event.data.height_cm`), `probiotic` (its `next_due`
+is exactly "when the once-a-day dose is next expected"), or any other
 chore type you add - `GET /api/chore-types` tells you each type's field
 names/units, and every numeric field also appears under `today.<field>`.
 

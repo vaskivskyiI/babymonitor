@@ -98,6 +98,24 @@ main { max-width: 720px; margin: 0 auto; padding: 1rem; }
 }
 .card:active { transform: scale(0.97); }
 
+.baby-info-bar {
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  color: white;
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.baby-name { font-weight: 700; font-size: 1.05rem; }
+.info-chips { display: flex; gap: 0.9rem; flex-wrap: wrap; }
+.info-chip { display: flex; flex-direction: column; align-items: center; line-height: 1.2; }
+.info-chip .info-val { font-weight: 700; font-size: 1.05rem; }
+.info-chip .info-lbl { font-size: 0.68rem; opacity: 0.85; text-transform: uppercase; letter-spacing: 0.03em; }
+
 .card .icon { font-size: 1.8rem; }
 .card .label { font-weight: 600; }
 .card .today { color: var(--muted); font-size: 0.78rem; }

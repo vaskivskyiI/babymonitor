@@ -128,4 +128,12 @@ class ChoreType:
 
 def load_builtin_types() -> None:
     # importing the modules triggers @register
-    from app.chore_types import diaper, feeding, sleep, pumping, weight  # noqa: F401
+    from app.chore_types import (  # noqa: F401
+        diaper,
+        feeding,
+        height,
+        probiotic,
+        pumping,
+        sleep,
+        weight,
+    )
