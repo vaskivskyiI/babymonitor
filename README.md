@@ -18,7 +18,16 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   checkpoint" instead of "+ Log now" while a feeding is still open (within
   a configurable session window, default 45 min since the last
   checkpoint), and "+ New" to start a separate feeding anyway.
+- **Sleep**: tap "Start Sleep" / "End Sleep" - duration is calculated
+  automatically from the two timestamps, no manual entry.
 - **Weight**: quick weigh-in log (grams + optional notes).
+- **Feeding calculator**: on the Stats tab, suggested amount per
+  feed/day, feeds per day, and interval between feeds for the baby's
+  current age (and a weight-based formula estimate if a recent weight is
+  on record) - editable to try other ages/weights.
+- **Installable as an app (PWA)**: add it to your phone's home screen
+  (Safari: Share → Add to Home Screen; Chrome: menu → Install app) for a
+  full-screen, app-like experience with an icon - no app store needed.
 - **Baby profile**: set a birth date (+ name, timezone) in Settings. Once
   set, the dashboard shows the baby's age, stats charts are labeled with
   age-in-days alongside the date, and "today" totals/day-bucketing use
@@ -34,7 +43,10 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   (e.g. wet/poopy diaper counts, ml fed, latest weight).
 - History view to browse/edit/delete past events.
 - Stats view with per-day charts (event counts, amounts, average
-  interval between events, weight-gain rate) over 24h/7d/14d/30d.
+  interval between events, total food/day) over 24h/7d/14d/30d/90d. The
+  weight chart is date-scaled (not just evenly-spaced buckets) and shows
+  a linear-regression trend extrapolated a bit into the future alongside
+  an "ideal" age-based growth band (anchored at birth weight if set).
 - **Fully modular**: chore types are plugins under `app/chore_types/`.
   The frontend renders forms and charts generically from each type's
   field definitions - adding a new chore type requires no frontend
@@ -184,7 +196,10 @@ rest_command:
     payload: >
       {"chore_type": "feeding", "data": {"entries": [{"timestamp": "{{ now().isoformat() }}", "method": "formula", "amount_ml": {{ states("input_number.bottle_ml") | int }} }]}}
 
-  # Sleep / pumping
+  # Sleep - start creates a new event; ending it requires knowing which
+  # event is open (see /api/status/sleep's open_event_id), so "end" is a
+  # PUT to that event's id, e.g. from a templated rest_command/script:
+  #   PUT /api/events/{{ open_event_id }}  {"data": {"ended_at": "{{ now().isoformat() }}"}}
   log_sleep_start:
     url: http://<server-ip>:8000/api/events
     method: POST
@@ -230,8 +245,9 @@ done in the app's Settings tab.
 - `POST /api/events` - log an event `{chore_type, timestamp?, data, notes?}`
 - `GET /api/events?chore_type=&since=&until=&limit=` - list events
 - `GET/PUT/DELETE /api/events/{id}` - fetch/edit/delete a single event
-- `GET /api/status` / `GET /api/status/{key}` - last event, next due time, active session id, and today's totals per numeric field
-- `GET /api/stats/{key}?days=7` - daily aggregation for charts, incl. `age_days`, `<field>_ref_min`/`_ref_max` reference-range bands where available, and `growth_rate` for `weight`
+- `GET /api/status` / `GET /api/status/{key}` - last event, next due time, active session id, `open_event_id` (for start/end types like sleep), and today's totals per numeric field
+- `GET /api/stats/{key}?days=7` - daily aggregation for charts (zero-filled for every calendar day in range), incl. `age_days`, `<field>_ref_min`/`_ref_max` reference-range bands where available, and `growth_rate`/`trend`/`ideal` for `weight`
+- `GET /api/calculators/feeding?age_days=&weight_g=` - suggested feeding amounts/interval for an age (defaults to the profile's age and latest weight if omitted)
 
 Interactive OpenAPI docs are available at `/docs`.
 
@@ -250,6 +266,13 @@ baby's age (via the birth date set in Settings):
 - Weight gain: ~20-40 g/day at 0-3 months, ~15-25 g/day at 3-6 months,
   ~7-15 g/day at 6-12 months
   ([WHO weight-for-age guidance, via Mayo Clinic](https://www.mayoclinic.org/healthy-lifestyle/infant-and-toddler-health/expert-answers/infant-growth/faq-20058037)).
+
+The feeding calculator (Stats tab) uses separate age-based guidance for
+amount per feed/day, feeds per day, and interval - see
+[Pampers' AAP-based feeding chart](https://www.pampers.com/en-us/baby/feeding/article/baby-feeding-schedule)
+and [KellyMom's milk-intake-by-age guide](https://kellymom.com/bf/pumpingmoms/pumping/milkcalc/),
+plus the AAP's ~2.5oz-per-lb-per-day rule of thumb for formula. Edit
+`app/feeding_guidance.py` to adjust.
 
 These are rough guides for a full-term, otherwise-healthy baby, **not
 medical advice** - every baby is different, and you should talk to your
@@ -278,6 +301,10 @@ class MyChoreType(ChoreType):
 
     def summarize(self, data: dict) -> str:
         return f"🧴 {data.get('amount', '')}ml"
+
+    # optional: fill in computed fields; `timestamp` is the event's own time
+    # def compute_derived(self, data: dict, timestamp: datetime) -> dict:
+    #     return data
 ```
 
 Then add the import to `load_builtin_types()` in
@@ -285,22 +312,33 @@ Then add the import to `load_builtin_types()` in
 and stats charts appear automatically - no other changes needed.
 
 Supported field types: `text`, `number`, `boolean`, `select`, `textarea`,
-`number_list`, `entries` (a repeatable list of timestamped mini-records,
-each described by its own `entry_fields` - used by `feeding` for
-checkpoints). Mark a field `computed=True` to have it appear in
-history/stats without being user-editable (filled in by
-`compute_derived()`). Set `session_window_configurable = True` and
-`default_session_window_minutes` on a `ChoreType` to get the "add
-checkpoint to the same event" dashboard behavior for session-style
-chores.
+`number_list`, `datetime` (a single date/time picker, separate from the
+event's own timestamp - used by `sleep`'s `ended_at`), `entries` (a
+repeatable list of timestamped mini-records, each described by its own
+`entry_fields` - used by `feeding` for checkpoints). Mark a field
+`computed=True` to have it appear in history/stats without being
+user-editable (filled in by `compute_derived()`, which receives the
+event's own `(data, timestamp)`). Set `session_window_configurable =
+True` and `default_session_window_minutes` on a `ChoreType` to get the
+"add checkpoint to the same event" dashboard behavior for session-style
+chores (e.g. `feeding`).
+
+For a **start/end** chore type (log a start, then log an end, with a
+derived duration - like `sleep`), set `has_start_end = True`, add a
+`datetime` field for the end time, override `is_open(data)` to report
+whether that field is still unset, and compute the duration in
+`compute_derived()` from `timestamp` (the start) to the end field. The
+dashboard automatically shows "Start X" / "End X" instead of "Log now"
+for such types, based on `GET /api/status`'s `open_event_id`.
 
 `numeric_stat=True` includes a field in stats/`today` aggregation
 (booleans count as 0/1, e.g. diaper's `pee`/`poop`). `stat_agg` controls
 how same-day values combine: `"sum"` (default - amounts, counts),
 `"avg"`, or `"last"` (e.g. `weight`'s `weight_g` - a reading isn't
-additive). Override `stats_extra(events, tz)` for derived series that
-aren't a simple per-day aggregate - `weight` uses it to compute a
-weight-gain-rate (g/day) series between consecutive readings.
+additive). Override `stats_extra(events, tz, profile)` for derived
+series that aren't a simple per-day aggregate - `weight` uses it to
+compute a weight-gain-rate series, a linear trend extrapolation, and an
+"ideal" age-based trajectory band.
 
 ## Local development (without Podman)
 

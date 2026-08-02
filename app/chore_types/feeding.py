@@ -64,10 +64,18 @@ class FeedingChoreType(ChoreType):
             numeric_stat=True,
             computed=True,
         ),
+        FieldDef(
+            name="total_amount_ml",
+            label="Total food",
+            type="number",
+            unit="ml",
+            numeric_stat=True,
+            computed=True,
+        ),
         FieldDef(name="notes", label="Notes", type="textarea"),
     ]
 
-    def compute_derived(self, data: dict) -> dict:
+    def compute_derived(self, data: dict, timestamp: datetime) -> dict:
         entries = [e for e in (data.get("entries") or []) if e]
         entries.sort(key=lambda e: _parse_ts(e.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc))
         data["entries"] = entries
@@ -94,6 +102,9 @@ class FeedingChoreType(ChoreType):
             if e.get("method") == "formula" and isinstance(e.get("amount_ml"), (int, float))
         ]
         data["total_formula_amount_ml"] = round(sum(formula_amounts)) if formula_amounts else None
+
+        total = (data["total_breast_amount_ml"] or 0) + (data["total_formula_amount_ml"] or 0)
+        data["total_amount_ml"] = total or None
         return data
 
     def last_activity(self, data: dict, fallback: datetime) -> datetime:

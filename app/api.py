@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.chore_types.base import REGISTRY
 from app.db import get_db
+from app.feeding_guidance import feeding_guidance
 from app.models import Event, Setting, as_utc
 from app.reference_ranges import reference_range
 from app.schemas import (
@@ -101,6 +102,7 @@ def get_profile(db: Session = Depends(get_db)):
     return ProfileOut(
         name=profile.get("name"),
         birth_date=date.fromisoformat(profile["birth_date"]) if profile.get("birth_date") else None,
+        birth_weight_g=profile.get("birth_weight_g"),
         timezone=profile.get("timezone") or "UTC",
         age_days=age,
     )
@@ -111,11 +113,34 @@ def update_profile(body: ProfileUpdate, db: Session = Depends(get_db)):
     value = {
         "name": body.name,
         "birth_date": body.birth_date.isoformat() if body.birth_date else None,
+        "birth_weight_g": body.birth_weight_g,
         "timezone": body.timezone or "UTC",
     }
     _set_setting(db, PROFILE_KEY, value)
     db.commit()
     return get_profile(db)
+
+
+@router.get("/calculators/feeding")
+def calculator_feeding(
+    age_days: int | None = None,
+    weight_g: float | None = None,
+    db: Session = Depends(get_db),
+):
+    profile = _get_profile_dict(db)
+    tz = _profile_timezone(profile)
+    if age_days is None:
+        age_days = _age_days(profile, _now().astimezone(tz))
+    if weight_g is None:
+        stmt = select(Event).where(Event.chore_type == "weight").order_by(Event.timestamp.desc()).limit(1)
+        last_weight = db.execute(stmt).scalars().first()
+        if last_weight:
+            weight_g = last_weight.data.get("weight_g")
+    result = feeding_guidance(age_days, weight_g)
+    if result is None:
+        raise HTTPException(400, "Set a birth date in Settings, or pass ?age_days= explicitly")
+    result["weight_g"] = weight_g
+    return result
 
 
 @router.get("/chore-types")
@@ -141,10 +166,11 @@ def update_settings(key: str, body: SettingsUpdate, db: Session = Depends(get_db
 @router.post("/events", response_model=EventOut)
 def create_event(body: EventCreate, db: Session = Depends(get_db)):
     ct = _get_chore_type(body.chore_type)
-    data = ct.compute_derived(dict(body.data))
+    timestamp = body.timestamp or _now()
+    data = ct.compute_derived(dict(body.data), timestamp)
     event = Event(
         chore_type=ct.key,
-        timestamp=body.timestamp or _now(),
+        timestamp=timestamp,
         data=data,
         notes=body.notes,
     )
@@ -190,7 +216,7 @@ def update_event(event_id: int, body: EventUpdate, db: Session = Depends(get_db)
     if body.timestamp is not None:
         event.timestamp = body.timestamp
     if body.data is not None:
-        event.data = ct.compute_derived(dict(body.data))
+        event.data = ct.compute_derived(dict(body.data), as_utc(event.timestamp))
     if body.notes is not None:
         event.notes = body.notes
     db.commit()
@@ -208,9 +234,12 @@ def delete_event(event_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-def _agg_value(field, values: list[float]) -> float:
+def _agg_value(field, values: list[float]) -> float | None:
+    """None means "no data" (as opposed to a real 0), so charts can leave a
+    gap instead of drawing a misleading zero - important for stat_agg="last"
+    fields like a weight reading, where 0 would be nonsensical."""
     if not values:
-        return 0.0
+        return None
     if field.stat_agg == "avg":
         return sum(values) / len(values)
     if field.stat_agg == "last":
@@ -246,6 +275,10 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
         if _now() - last_activity <= timedelta(minutes=window):
             active_session_event_id = last.id
 
+    open_event_id = None
+    if last_out and ct.has_start_end and ct.is_open(last.data):
+        open_event_id = last.id
+
     today_start, today_end = _today_bounds(tz)
     today_stmt = select(Event).where(
         Event.chore_type == ct.key, Event.timestamp >= today_start, Event.timestamp < today_end
@@ -255,7 +288,8 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
     for f in ct.numeric_fields():
         values = [e.data.get(f.name) for e in today_events]
         values = [v for v in values if isinstance(v, (int, float))]
-        today[f.name] = round(_agg_value(f, values), 1)
+        agg = _agg_value(f, values)
+        today[f.name] = round(agg, 1) if agg is not None else 0.0
 
     return StatusOut(
         chore_type=ct.key,
@@ -266,6 +300,7 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
         interval_minutes=interval,
         overdue=overdue,
         active_session_event_id=active_session_event_id,
+        open_event_id=open_event_id,
         today=today,
     )
 
@@ -316,7 +351,13 @@ def stats(key: str, days: int = Query(7, le=90), db: Session = Depends(get_db)):
             intervals_minutes.append((e.timestamp - prev_ts).total_seconds() / 60)
         prev_ts = e.timestamp
 
-    days_list = sorted(daily_counts.keys())
+    # zero-fill every calendar day in the window (not just days with events)
+    # so charts have a true continuous date axis
+    start_date = since.astimezone(tz).date()
+    end_date = _now().astimezone(tz).date()
+    days_list = [
+        (start_date + timedelta(days=i)).isoformat() for i in range((end_date - start_date).days + 1)
+    ]
     avg_interval = sum(intervals_minutes) / len(intervals_minutes) if intervals_minutes else None
 
     day_dicts = []
@@ -326,7 +367,8 @@ def stats(key: str, days: int = Query(7, le=90), db: Session = Depends(get_db)):
         if day_age is not None:
             entry["age_days"] = day_age
         for f in numeric_fields_defs:
-            entry[f.name] = round(_agg_value(f, daily_values[d][f.name]), 1)
+            agg = _agg_value(f, daily_values[d][f.name])
+            entry[f.name] = round(agg, 1) if agg is not None else None
             ref = reference_range(ct.key, f.name, day_age)
             if ref:
                 entry[f"{f.name}_ref_min"] = ref["min"]
@@ -335,7 +377,7 @@ def stats(key: str, days: int = Query(7, le=90), db: Session = Depends(get_db)):
                 entry[f"{f.name}_ref_source_url"] = ref.get("source_url")
         day_dicts.append(entry)
 
-    extra = ct.stats_extra(events, tz)
+    extra = ct.stats_extra(events, tz, profile)
     for rate in extra.get("growth_rate", []):
         age = _age_days(profile, datetime.fromisoformat(rate["timestamp"]).astimezone(tz))
         ref = reference_range(ct.key, "gain_g_per_day", age)

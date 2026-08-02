@@ -23,7 +23,7 @@ class FieldOption(BaseModel):
 class FieldDef(BaseModel):
     name: str
     label: str
-    # text | number | boolean | select | textarea | number_list | entries
+    # text | number | boolean | select | textarea | number_list | entries | datetime
     type: str
     unit: Optional[str] = None
     required: bool = False
@@ -72,9 +72,21 @@ class ChoreType:
     session_window_configurable: bool = False
     default_session_window_minutes: Optional[int] = None
 
-    def compute_derived(self, data: dict) -> dict:
-        """Hook to fill in computed fields (e.g. amount from weights) before saving."""
+    # "Start/end" support: the event's own timestamp marks the start, and a
+    # designated field (see is_open()) marks the end - e.g. sleep. While the
+    # last event has no end recorded yet, the dashboard offers "End X"
+    # instead of "Start X".
+    has_start_end: bool = False
+
+    def compute_derived(self, data: dict, timestamp: datetime) -> dict:
+        """Hook to fill in computed fields (e.g. amount from weights, or
+        duration from timestamp/end fields) before saving. `timestamp` is
+        the event's own (start) time."""
         return data
+
+    def is_open(self, data: dict) -> bool:
+        """For has_start_end types: True if this event has no end recorded yet."""
+        return False
 
     def summarize(self, data: dict) -> str:
         """Short human readable summary of an event, used in history/cards."""
@@ -93,10 +105,11 @@ class ChoreType:
         session is still open. Defaults to the event's own timestamp."""
         return fallback
 
-    def stats_extra(self, events: list, tz) -> dict:
+    def stats_extra(self, events: list, tz, profile: dict) -> dict:
         """Hook for extra derived series in GET /api/stats/{key}, beyond the
-        per-day numeric_stat aggregation (e.g. weight-gain rate for the
-        `weight` type, computed from consecutive readings)."""
+        per-day numeric_stat aggregation (e.g. weight-gain rate, trend
+        extrapolation, and an "ideal" reference trajectory for `weight`,
+        computed from consecutive readings and the baby profile)."""
         return {}
 
     def as_dict(self, interval_minutes: Optional[int], session_window_minutes: Optional[int] = None) -> dict:
@@ -109,6 +122,7 @@ class ChoreType:
             "interval_configurable": self.interval_configurable,
             "session_window_configurable": self.session_window_configurable,
             "session_window_minutes": session_window_minutes,
+            "has_start_end": self.has_start_end,
         }
 
 

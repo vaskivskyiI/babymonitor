@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -28,3 +28,10 @@ def index(request: Request):
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
+
+@app.get("/sw.js")
+def service_worker():
+    # served from the root (not /static/) so its default scope covers the
+    # whole app, including "/" - required for install prompts to fire
+    return FileResponse("app/static/sw.js", media_type="application/javascript")

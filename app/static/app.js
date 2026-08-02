@@ -88,16 +88,34 @@ async function loadDashboard() {
   statuses.forEach((s) => {
     const card = document.createElement("div");
     card.className = "card";
-    let lastHtml = '<div class="last">No events yet</div>';
+    const ct = choreType(s.chore_type);
+
+    // "last event" chip - the headline info on the card, right above the action button
+    let lastHtml = '<div class="last-chip empty">No events yet</div>';
     if (s.last_event) {
-      lastHtml = `<div class="last">${s.last_event.summary}<br>${fmtRelative(s.last_event.timestamp)}</div>`;
+      const openBadge = s.open_event_id ? '<span class="live-pill">live</span>' : "";
+      lastHtml = `<div class="last-chip">
+          <div class="last-summary">${s.last_event.summary}${openBadge}</div>
+          <div class="last-time">${fmtRelative(s.last_event.timestamp)}</div>
+        </div>`;
     }
+
     let dueHtml = "";
     if (s.next_due) {
       dueHtml = `<div class="due ${s.overdue ? "overdue" : "ok"}">${s.overdue ? "Overdue by" : "Next"} ${fmtRelative(s.next_due).replace("ago", "").replace("in ", "")}</div>`;
     }
+
     let buttonsHtml;
-    if (s.active_session_event_id) {
+    let targetEventId = null;
+    if (ct && ct.has_start_end) {
+      if (s.open_event_id) {
+        targetEventId = s.open_event_id;
+        buttonsHtml = `<button class="quick-btn end-btn" data-action="end">⏰ End ${ct.label}</button>`;
+      } else {
+        buttonsHtml = `<button class="quick-btn" data-action="start">${ct.icon} Start ${ct.label}</button>`;
+      }
+    } else if (s.active_session_event_id) {
+      targetEventId = s.active_session_event_id;
       buttonsHtml = `
         <div class="row">
           <button class="quick-btn" data-action="checkpoint">+ Add checkpoint</button>
@@ -106,7 +124,7 @@ async function loadDashboard() {
     } else {
       buttonsHtml = `<button class="quick-btn" data-action="new">+ Log now</button>`;
     }
-    const ct = choreType(s.chore_type);
+
     let todayHtml = "";
     if (ct) {
       const parts = ct.fields
@@ -122,22 +140,22 @@ async function loadDashboard() {
       ${todayHtml}
       ${buttonsHtml}
     `;
-    const defaultAction = s.active_session_event_id ? "checkpoint" : "new";
+    const defaultAction = card.querySelector("[data-action]")?.dataset.action || "new";
     card.querySelectorAll("[data-action]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        handleCardAction(s.chore_type, btn.dataset.action, s.active_session_event_id);
+        handleCardAction(s.chore_type, btn.dataset.action, targetEventId);
       });
     });
-    card.addEventListener("click", () => handleCardAction(s.chore_type, defaultAction, s.active_session_event_id));
+    card.addEventListener("click", () => handleCardAction(s.chore_type, defaultAction, targetEventId));
     container.appendChild(card);
   });
 }
 
-async function handleCardAction(choreTypeKey, action, activeSessionEventId) {
-  if (action === "checkpoint" && activeSessionEventId) {
-    const event = await api(`/api/events/${activeSessionEventId}`);
-    openForm(choreTypeKey, "checkpoint", event);
+async function handleCardAction(choreTypeKey, action, targetEventId) {
+  if ((action === "checkpoint" || action === "end") && targetEventId) {
+    const event = await api(`/api/events/${targetEventId}`);
+    openForm(choreTypeKey, action, event);
   } else {
     openForm(choreTypeKey, "create");
   }
@@ -172,7 +190,13 @@ function buildFieldHtml(field, value) {
   if (field.type === "number") {
     return `<div class="field">
       <label for="${id}">${field.label}${field.unit ? ` (${field.unit})` : ""}</label>
-      <input type="number" step="any" id="${id}" name="${field.name}" value="${val ?? ""}">
+      <input type="number" step="any" inputmode="decimal" id="${id}" name="${field.name}" value="${val ?? ""}">
+    </div>`;
+  }
+  if (field.type === "datetime") {
+    return `<div class="field">
+      <label for="${id}">${field.label}</label>
+      <input type="datetime-local" id="${id}" name="${field.name}" value="${val ? toLocalInputValue(val) : ""}">
     </div>`;
   }
   if (field.type === "number_list") {
@@ -248,12 +272,19 @@ function attachEntriesHandlers(form, field, initialEntries) {
 function openForm(choreTypeKey, mode, event) {
   const ct = choreType(choreTypeKey);
   state.currentEdit = { mode, choreType: choreTypeKey, eventId: event ? event.id : null };
-  const titlePrefix = mode === "checkpoint" ? "Add to " : mode === "edit" ? "Edit " : "Log ";
-  document.getElementById("modal-title").textContent = titlePrefix + ct.label;
+  const titlePrefixes = { checkpoint: "Add to ", edit: "Edit ", end: "End " };
+  document.getElementById("modal-title").textContent = (titlePrefixes[mode] || "Log ") + ct.label;
 
   const form = document.getElementById("modal-form");
   const data = event ? { ...event.data } : {};
   const editableFields = ct.fields.filter((f) => !f.computed);
+
+  if (mode === "end") {
+    // prefill any not-yet-set datetime field (e.g. sleep's "ended_at") with now
+    editableFields.forEach((f) => {
+      if (f.type === "datetime" && !data[f.name]) data[f.name] = new Date().toISOString();
+    });
+  }
 
   let html = `<div class="field">
       <label for="f_timestamp">Time</label>
@@ -308,6 +339,9 @@ async function submitForm(ct, form, existingEvent) {
       } else if (f.type === "number") {
         const raw = form.querySelector(`[name="${f.name}"]`).value;
         data[f.name] = raw === "" ? null : Number(raw);
+      } else if (f.type === "datetime") {
+        const raw = form.querySelector(`[name="${f.name}"]`).value;
+        data[f.name] = raw === "" ? null : fromLocalInputValue(raw);
       } else if (f.type === "number_list") {
         const wrap = form.querySelector(`.number-list[data-name="${f.name}"]`);
         const vals = Array.from(wrap.querySelectorAll(".number-list-row input"))
@@ -384,6 +418,9 @@ async function loadHistory() {
   }
   const type = select.value;
   const events = await api(`/api/events${type ? `?chore_type=${type}` : ""}`);
+  // Defensive: always show newest-first by actual event time, regardless of
+  // insertion order or any backend sort quirks (e.g. backdated entries).
+  events.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   const list = document.getElementById("history-list");
   list.innerHTML = "";
   events.forEach((ev) => {
@@ -448,11 +485,13 @@ function svgBarChart(points, color) {
   let labels = "";
   points.forEach((p, i) => {
     const x = slotW * i + (slotW - barW) / 2;
-    const val = p.value || 0;
-    const barH = (val / max) * plotH;
-    const y = padTop + plotH - barH;
-    bars += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(barH, val ? 2 : 0)}" rx="3" fill="${color}"></rect>`;
-    bars += `<text x="${x + barW / 2}" y="${y - 4}" font-size="10" text-anchor="middle" fill="currentColor">${val || ""}</text>`;
+    const val = p.value;
+    if (val != null) {
+      const barH = (val / max) * plotH;
+      const y = padTop + plotH - barH;
+      bars += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(barH, val ? 2 : 0)}" rx="3" fill="${color}"></rect>`;
+      bars += `<text x="${x + barW / 2}" y="${y - 4}" font-size="10" text-anchor="middle" fill="currentColor">${val}</text>`;
+    }
     const dateLabel = p.date.slice(5);
     const ageLabel = p.ageDays != null ? `d${p.ageDays}` : "";
     labels += `<text x="${x + barW / 2}" y="${h - 20}" font-size="9" text-anchor="middle" fill="currentColor" opacity="0.6">${dateLabel}</text>`;
@@ -461,6 +500,99 @@ function svgBarChart(points, color) {
     }
   });
   return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="color:inherit">${band}${bars}${labels}</svg>`;
+}
+
+// True date-proportional line chart (x-position reflects actual calendar
+// gaps, not evenly-spaced buckets). Used for weight: actual readings +
+// linear-regression trend extrapolation + an "ideal" reference trajectory.
+function svgLineChart({ actual = [], trend = [], idealLow = [], idealHigh = [], unit = "" }) {
+  const allDates = [...actual, ...trend, ...idealLow, ...idealHigh].map((p) => p.date);
+  if (!allDates.length) return "";
+  const minDate = allDates.reduce((a, b) => (a < b ? a : b));
+  const maxDate = allDates.reduce((a, b) => (a > b ? a : b));
+  const dayMs = 86400000;
+  const spanDays = Math.max(1, (new Date(maxDate) - new Date(minDate)) / dayMs);
+
+  const w = Math.max(360, Math.min(spanDays * 14, 1400));
+  const h = 200;
+  const padTop = 16;
+  const padBottom = 28;
+  const padLeft = 4;
+  const padRight = 4;
+  const plotW = w - padLeft - padRight;
+  const plotH = h - padTop - padBottom;
+
+  const allVals = [...actual, ...trend, ...idealLow, ...idealHigh].map((p) => p.value).filter((v) => v != null);
+  const minVal = Math.min(...allVals);
+  const maxVal = Math.max(...allVals);
+  const valPad = Math.max(1, (maxVal - minVal) * 0.1);
+  const yMin = minVal - valPad;
+  const yMax = maxVal + valPad;
+
+  const xFor = (dateStr) => padLeft + ((new Date(dateStr) - new Date(minDate)) / dayMs / spanDays) * plotW;
+  const yFor = (v) => padTop + plotH - ((v - yMin) / (yMax - yMin || 1)) * plotH;
+
+  const pathFor = (points) =>
+    points
+      .filter((p) => p.value != null)
+      .map((p, i) => `${i === 0 ? "M" : "L"}${xFor(p.date).toFixed(1)},${yFor(p.value).toFixed(1)}`)
+      .join(" ");
+
+  let svg = "";
+
+  // ideal band (shaded low-high area)
+  if (idealLow.length && idealHigh.length) {
+    const top = idealHigh.map((p, i) => `${i === 0 ? "M" : "L"}${xFor(p.date)},${yFor(p.value)}`).join(" ");
+    const bottom = [...idealLow]
+      .reverse()
+      .map((p) => `L${xFor(p.date)},${yFor(p.value)}`)
+      .join(" ");
+    svg += `<path d="${top} ${bottom} Z" fill="var(--ok)" opacity="0.12"></path>`;
+  }
+
+  // trend line (actual portion solid, projected portion dashed)
+  if (trend.length) {
+    const solid = trend.filter((p) => !p.projected);
+    const dashedPart = trend.filter((p, i) => p.projected || (i > 0 && trend[i - 1].projected === false && p.projected !== false));
+    if (solid.length) svg += `<path d="${pathFor(solid)}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 3"></path>`;
+    const proj = trend.filter((p) => p.projected);
+    const bridge = solid.length ? [solid[solid.length - 1], ...proj] : proj;
+    if (proj.length) svg += `<path d="${pathFor(bridge)}" fill="none" stroke="var(--primary)" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.8"></path>`;
+  }
+
+  // actual readings - solid line + dots
+  if (actual.length) {
+    svg += `<path d="${pathFor(actual)}" fill="none" stroke="var(--ok)" stroke-width="2.5"></path>`;
+    actual.forEach((p) => {
+      if (p.value == null) return;
+      svg += `<circle cx="${xFor(p.date)}" cy="${yFor(p.value)}" r="3.5" fill="var(--ok)"></circle>`;
+    });
+    // label first/last point
+    const first = actual[0];
+    const last = actual[actual.length - 1];
+    svg += `<text x="${xFor(first.date)}" y="${yFor(first.value) - 8}" font-size="10" text-anchor="start" fill="currentColor">${first.value}${unit}</text>`;
+    if (last !== first) {
+      svg += `<text x="${xFor(last.date)}" y="${yFor(last.value) - 8}" font-size="10" text-anchor="end" fill="currentColor" font-weight="600">${last.value}${unit}</text>`;
+    }
+  }
+
+  // x-axis date labels (sparse, ~6 ticks)
+  const tickCount = Math.min(6, Math.round(spanDays) + 1);
+  let labels = "";
+  for (let i = 0; i <= tickCount; i++) {
+    const t = new Date(new Date(minDate).getTime() + (spanDays * dayMs * i) / tickCount);
+    const dstr = t.toISOString().slice(0, 10);
+    labels += `<text x="${xFor(dstr)}" y="${h - 8}" font-size="9" text-anchor="middle" fill="currentColor" opacity="0.6">${dstr.slice(5)}</text>`;
+  }
+
+  // "today" marker
+  const todayStr = new Date().toISOString().slice(0, 10);
+  let todayLine = "";
+  if (todayStr >= minDate && todayStr <= maxDate) {
+    todayLine = `<line x1="${xFor(todayStr)}" y1="${padTop}" x2="${xFor(todayStr)}" y2="${h - padBottom}" stroke="currentColor" stroke-width="1" stroke-dasharray="2 3" opacity="0.35"></line>`;
+  }
+
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="color:inherit">${svg}${todayLine}${labels}</svg>`;
 }
 
 async function loadStats() {
@@ -510,6 +642,8 @@ async function loadStats() {
       "var(--primary)"
     )}</div>`;
     data.numeric_fields.forEach((f) => {
+      // weight_g gets the richer date-scaled chart with trend + ideal band instead
+      if (key === "weight" && f === "weight_g") return;
       const points = data.days.map((d) => ({
         date: d.date,
         value: d[f],
@@ -525,6 +659,23 @@ async function loadStats() {
     });
   }
 
+  if (key === "weight" && (data.days.some((d) => d.weight_g != null) || (data.trend && data.trend.length))) {
+    const actual = data.days.filter((d) => d.weight_g != null).map((d) => ({ date: d.date, value: d.weight_g }));
+    const trend = data.trend || [];
+    const ideal = data.ideal || [];
+    const idealLow = ideal.map((p) => ({ date: p.date, value: p.low }));
+    const idealHigh = ideal.map((p) => ({ date: p.date, value: p.high }));
+    const legend = `<div class="chart-legend">
+        <span><i class="dot" style="background:var(--ok)"></i>Actual weight</span>
+        <span><i class="dot" style="background:var(--primary)"></i>Trend (dashed = projected)</span>
+        <span><i class="dot band"></i>Ideal range (age-based)</span>
+      </div>`;
+    html = `<div class="chart-block"><h3>Weight over time</h3>${svgLineChart({ actual, trend, idealLow, idealHigh, unit: "g" })}${legend}${refFooter({
+      source_label: "WHO weight-for-age growth guidance",
+      source_url: "https://www.mayoclinic.org/healthy-lifestyle/infant-and-toddler-health/expert-answers/infant-growth/faq-20058037",
+    })}</div>` + html;
+  }
+
   if (data.growth_rate && data.growth_rate.length) {
     const points = data.growth_rate.map((r) => ({
       date: r.date,
@@ -538,6 +689,65 @@ async function loadStats() {
   }
 
   charts.innerHTML = html;
+
+  if (key === "feeding") {
+    loadFeedingCalculator();
+    document.getElementById("calculator-box").classList.remove("hidden");
+  } else {
+    document.getElementById("calculator-box").classList.add("hidden");
+  }
+}
+
+// ---------- feeding calculator ----------
+
+async function loadFeedingCalculator(overrides = {}) {
+  const box = document.getElementById("calculator-box");
+  const params = new URLSearchParams();
+  if (overrides.age_days != null && overrides.age_days !== "") params.set("age_days", overrides.age_days);
+  if (overrides.weight_g != null && overrides.weight_g !== "") params.set("weight_g", overrides.weight_g);
+
+  let data;
+  try {
+    data = await api(`/api/calculators/feeding${params.toString() ? "?" + params.toString() : ""}`);
+  } catch (err) {
+    box.innerHTML = `<div class="chart-block"><h3>🍽️ Feeding calculator</h3><p style="color:var(--muted)">Set a birth date in Settings to use the calculator, or enter an age below.</p>
+      <div class="row"><label>Age (days) <input type="number" min="0" id="calc-age" style="width:80px"></label>
+      <button class="btn secondary" id="calc-recalc">Calculate</button></div></div>`;
+    document.getElementById("calc-recalc").addEventListener("click", () => {
+      loadFeedingCalculator({ age_days: document.getElementById("calc-age").value });
+    });
+    return;
+  }
+
+  const formula = data.formula_weight_based;
+  box.innerHTML = `
+    <div class="chart-block">
+      <h3>🍽️ Feeding calculator</h3>
+      <div class="row calc-inputs">
+        <label>Age (days) <input type="number" min="0" id="calc-age" value="${data.age_days ?? ""}" style="width:80px"></label>
+        <label>Weight (g) <input type="number" min="0" id="calc-weight" value="${data.weight_g ?? ""}" style="width:90px"></label>
+        <button class="btn secondary" id="calc-recalc">Recalculate</button>
+      </div>
+      <div class="stats-summary">
+        <div class="stat-box"><div class="num">${data.per_feed_ml.min}–${data.per_feed_ml.max}<span class="unit">ml</span></div><div class="lbl">per feed</div></div>
+        <div class="stat-box"><div class="num">${data.per_day_ml.min}–${data.per_day_ml.max}<span class="unit">ml</span></div><div class="lbl">per day</div></div>
+        <div class="stat-box"><div class="num">${data.feeds_per_day.min}–${data.feeds_per_day.max}</div><div class="lbl">feeds/day</div></div>
+        <div class="stat-box"><div class="num">${data.interval_hours.min}–${data.interval_hours.max}h</div><div class="lbl">suggested interval</div></div>
+      </div>
+      ${
+        formula
+          ? `<div class="chart-ref-note">Formula (weight-based rule): ~${formula.per_day_ml}ml/day (~${formula.per_feed_ml}ml/feed) &middot; ${formula.basis}</div>`
+          : ""
+      }
+      ${data.note ? `<div class="chart-ref-note">${data.note}</div>` : ""}
+      <div class="chart-ref-note">Sources: ${data.sources.map((s) => `<a href="${s.url}" target="_blank" rel="noopener">${s.label}</a>`).join(" &middot; ")}. General guidance only, not medical advice - every baby is different.</div>
+    </div>`;
+  document.getElementById("calc-recalc").addEventListener("click", () => {
+    loadFeedingCalculator({
+      age_days: document.getElementById("calc-age").value,
+      weight_g: document.getElementById("calc-weight").value,
+    });
+  });
 }
 
 // ---------- profile ----------
@@ -552,17 +762,20 @@ async function loadProfile() {
       <div class="row">
         <label>Name <input type="text" id="profile-name" style="width:120px" value="${p.name || ""}"></label>
         <label>Birth date <input type="date" id="profile-birthdate" value="${p.birth_date || ""}"></label>
+        <label>Birth weight (g) <input type="number" min="0" id="profile-birthweight" style="width:100px" value="${p.birth_weight_g ?? ""}"></label>
         <label>Timezone <input type="text" id="profile-timezone" style="width:150px" placeholder="e.g. Europe/Ljubljana" value="${p.timezone || "UTC"}"></label>
         <button class="btn secondary" id="save-profile-btn">Save</button>
       </div>
     </div>`;
   document.getElementById("save-profile-btn").addEventListener("click", async () => {
     try {
+      const bw = document.getElementById("profile-birthweight").value;
       await api("/api/profile", {
         method: "PUT",
         body: JSON.stringify({
           name: document.getElementById("profile-name").value || null,
           birth_date: document.getElementById("profile-birthdate").value || null,
+          birth_weight_g: bw === "" ? null : Number(bw),
           timezone: document.getElementById("profile-timezone").value || "UTC",
         }),
       });
@@ -637,3 +850,9 @@ initTabs();
   await loadDashboard();
   setInterval(loadDashboard, 30000);
 })();
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}

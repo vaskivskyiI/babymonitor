@@ -44,12 +44,14 @@ class StatusOut(BaseModel):
     interval_minutes: Optional[int] = None
     overdue: bool = False
     active_session_event_id: Optional[int] = None
+    open_event_id: Optional[int] = None
     today: dict[str, float] = {}
 
 
 class ProfileOut(BaseModel):
     name: Optional[str] = None
     birth_date: Optional[date] = None
+    birth_weight_g: Optional[float] = None
     timezone: str = "UTC"
     age_days: Optional[int] = None
 
@@ -57,4 +59,5 @@ class ProfileOut(BaseModel):
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     birth_date: Optional[date] = None
+    birth_weight_g: Optional[float] = None
     timezone: Optional[str] = None
