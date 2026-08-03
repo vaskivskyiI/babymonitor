@@ -1,3 +1,5 @@
+import time
+
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +16,10 @@ app = FastAPI(title="Baby Monitor")
 app.include_router(api_router)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
+
+# Cache-busts style.css/app.js on every process restart (i.e. every deploy),
+# so browsers don't need a manual hard-refresh to pick up UI changes.
+ASSET_VERSION = str(int(time.time()))
 
 
 def _seed_chore_type_order() -> None:
@@ -41,7 +47,7 @@ def on_startup():
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("index.html", {"request": request, "asset_version": ASSET_VERSION})
 
 
 @app.get("/healthz")

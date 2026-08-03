@@ -22,7 +22,8 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   session window, default 45 min since the last checkpoint), and "+ New"
   to start a separate feeding anyway.
 - **Sleep**: tap "Start Sleep" / "End Sleep" - duration is calculated
-  automatically from the two timestamps, no manual entry.
+  automatically from the two timestamps, no manual entry, and displayed
+  as "2h 15m" rather than raw minutes once it's over 90 min.
 - **Weight** and **Height**: quick weigh-in / measurement log.
 - **Pumping**: also a checkpoint-based log, one sub-step per side/session
   (amount + duration each), so a left-then-right pump adds up correctly.

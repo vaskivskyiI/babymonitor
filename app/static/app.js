@@ -28,6 +28,21 @@ function toast(msg) {
   setTimeout(() => el.classList.add("hidden"), 2500);
 }
 
+function fmtDurationMinutes(minutes) {
+  minutes = Math.round(minutes);
+  if (minutes <= 90) return `${minutes}min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+// Formats a field's value for display given its declared type/display hint
+// (e.g. duration fields as "2h 15m" instead of raw minutes).
+function fmtFieldValue(field, value) {
+  if (field.display === "duration") return fmtDurationMinutes(value);
+  return `${value}${field.unit || ""}`;
+}
+
 function fmtRelative(dateIso, futureLabel = "in") {
   const now = new Date();
   const d = new Date(dateIso);
@@ -219,7 +234,7 @@ async function loadDashboard() {
     if (ct) {
       const parts = ct.fields
         .filter((f) => f.numeric_stat && (s.today[f.name] || 0) > 0)
-        .map((f) => `${f.label}: ${s.today[f.name]}${f.unit || ""}`);
+        .map((f) => `${f.label}: ${fmtFieldValue(f, s.today[f.name])}`);
       if (parts.length) todayHtml = `<div class="today">Today: ${parts.join(", ")}</div>`;
     }
     card.innerHTML = `
@@ -1279,14 +1294,14 @@ async function loadSettings() {
       <div class="row">
         ${
           ct.interval_configurable
-            ? `<label>Reminder <input type="number" min="0" class="interval-input" style="width:80px" value="${ct.interval_minutes ?? ""}"> min</label>`
+            ? `<label>Reminder <input type="number" min="0" class="interval-input" style="width:92px" value="${ct.interval_minutes ?? ""}"> min</label>`
             : ct.fixed_reminder_note
               ? `<span style="color:var(--muted)">${ct.fixed_reminder_note}</span>`
               : '<span style="color:var(--muted)">no reminder</span>'
         }
         ${
           ct.session_window_configurable
-            ? `<label>Session window <input type="number" min="0" class="session-window-input" style="width:80px" value="${ct.session_window_minutes ?? ""}"> min</label>`
+            ? `<label>Session window <input type="number" min="0" class="session-window-input" style="width:92px" value="${ct.session_window_minutes ?? ""}"> min</label>`
             : ""
         }
         ${

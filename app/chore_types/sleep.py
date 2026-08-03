@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from app.chore_types.base import ChoreType, FieldDef, register
+from app.chore_types.base import ChoreType, FieldDef, format_duration_minutes, register
 
 
 def _parse_ts(value) -> datetime | None:
@@ -34,6 +34,7 @@ class SleepChoreType(ChoreType):
             numeric_stat=True,
             stat_agg="sum",
             computed=True,
+            display="duration",
         ),
         FieldDef(name="notes", label="Notes", type="textarea"),
     ]
@@ -54,5 +55,5 @@ class SleepChoreType(ChoreType):
     def summarize(self, data: dict) -> str:
         if data.get("ended_at"):
             dur = data.get("duration_minutes")
-            return f"😴 Slept {dur} min" if dur else "😴 Sleep"
+            return f"😴 Slept {format_duration_minutes(dur)}" if dur else "😴 Sleep"
         return "😴 Sleeping..."

@@ -41,6 +41,10 @@ class FieldDef(BaseModel):
     # step size for the +/- stepper shown on "number" fields (also used
     # within entries), so common values can be tapped instead of typed
     step: float = 1
+    # rendering hint for a "number" field's value elsewhere in the UI
+    # (today chip, history, charts). "duration" formats minutes as "Xh Ym"
+    # once over 90 min instead of a raw minute count.
+    display: Optional[str] = None
     # only for type == "entries": schema for each item in the repeatable list.
     # Every entry automatically also gets a "timestamp" (datetime).
     entry_fields: Optional[list["FieldDef"]] = None
@@ -51,6 +55,17 @@ class FieldDef(BaseModel):
 
 
 FieldDef.model_rebuild()
+
+
+def format_duration_minutes(minutes: float) -> str:
+    """"90 min" and below stays as minutes; above that, "Xh Ym" (dropping
+    the minutes if they're 0). Shared by any chore type with a duration
+    field (e.g. sleep) for a consistent, readable display."""
+    minutes = round(minutes)
+    if minutes <= 90:
+        return f"{minutes} min"
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}h {mins}m" if mins else f"{hours}h"
 
 
 REGISTRY: dict[str, "ChoreType"] = {}
