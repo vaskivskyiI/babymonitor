@@ -10,22 +10,27 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   "peed during the change" / "pooped during the change".
 - **Feeding**: a feeding is a *session* you build up as it happens. Add as
   many timestamped checkpoints as you like (breast - either side or
-  unspecified - or formula, each with an optional baby weight and/or
-  amount) while the feeding is in progress - switching breasts, topping
-  up with formula, etc. Total breast milk (ml) is auto-calculated from
-  weight gain between checkpoints - e.g. weigh before, feed one or two
-  breasts, weigh after, and the difference becomes the amount (or from
-  manually-entered amounts if you don't weigh); formula amount is summed
-  separately. The dashboard offers "+ Add checkpoint" instead of "+ Log
-  now" while a feeding is still open (within a configurable session
-  window, default 45 min since the last checkpoint), and "+ New" to
-  start a separate feeding anyway.
+  unspecified - or formula) while the feeding is in progress - switching
+  breasts, topping up with formula, etc. Weigh before and after each
+  breast sub-step (the reading doesn't need to be the baby's real weight -
+  dressed weight on a kitchen/bathroom scale is fine, only the difference
+  matters) and the amount is calculated automatically; each new
+  sub-step's "weight before" is pre-filled from the previous one's
+  "weight after", so you're not retyping the same number. Formula amount
+  is summed separately. The dashboard offers "+ Add checkpoint" instead
+  of "+ Log now" while a feeding is still open (within a configurable
+  session window, default 45 min since the last checkpoint), and "+ New"
+  to start a separate feeding anyway.
 - **Sleep**: tap "Start Sleep" / "End Sleep" - duration is calculated
   automatically from the two timestamps, no manual entry.
 - **Weight** and **Height**: quick weigh-in / measurement log.
+- **Pumping**: also a checkpoint-based log, one sub-step per side/session
+  (amount + duration each), so a left-then-right pump adds up correctly.
 - **Probiotic** (or any once-a-day supplement): a single tap logs it
-  given; the dashboard tracks the once-per-day interval and flags it
-  overdue automatically, same as any other reminder.
+  given. It's due once per *calendar day*, not "24 hours since last
+  dose" - so giving it early one day doesn't push tomorrow's reminder
+  later; it resets at local midnight and the dashboard flags it overdue
+  automatically, same as any other reminder.
 - **Baby info bar**: the Dashboard leads with the baby's name, current
   age, latest weight and latest height at a glance.
 - **Feeding calculator**: on the Stats tab, suggested amount per
@@ -325,12 +330,17 @@ Supported field types: `text`, `number`, `boolean`, `select`, `textarea`,
 `number_list`, `datetime` (a single date/time picker, separate from the
 event's own timestamp - used by `sleep`'s `ended_at`), `entries` (a
 repeatable list of timestamped mini-records, each described by its own
-`entry_fields` - used by `feeding` for checkpoints). Mark a field
-`computed=True` to have it appear in history/stats without being
-user-editable (filled in by `compute_derived()`, which receives the
-event's own `(data, timestamp)`). Set `session_window_configurable =
-True` and `default_session_window_minutes` on a `ChoreType` to get the
-"add checkpoint to the same event" dashboard behavior for session-style
+`entry_fields` - used by `feeding` for checkpoints and `pumping` for
+sub-steps). Within `entry_fields`, set `carry_from="<other field name>"`
+on a field to have it pre-filled from the *previous* entry's value for
+that field when you add a new one - `feeding` uses this so each
+sub-step's "weight before" defaults to the last sub-step's "weight
+after". Mark a field `computed=True` to have it appear in history/stats
+without being user-editable (filled in by `compute_derived()`, which
+receives the event's own `(data, timestamp)`). Set
+`session_window_configurable = True` and
+`default_session_window_minutes` on a `ChoreType` to get the "add
+checkpoint to the same event" dashboard behavior for session-style
 chores (e.g. `feeding`).
 
 For a **start/end** chore type (log a start, then log an end, with a
@@ -349,6 +359,14 @@ additive). Override `stats_extra(events, tz, profile)` for derived
 series that aren't a simple per-day aggregate - `weight` uses it to
 compute a weight-gain-rate series, a linear trend extrapolation, and an
 "ideal" age-based trajectory band.
+
+Override `next_due(last_timestamp, interval_minutes, tz)` for a reminder
+that isn't a simple rolling interval - `probiotic` uses it to reset at
+the start of the next *calendar day* (in the profile's timezone) rather
+than exactly 24h after the last dose. Pair it with
+`interval_configurable = False` and a `fixed_reminder_note` string so
+Settings shows something more informative than "no reminder" for a type
+that has a real, just non-numeric, reminder rule.
 
 ## Local development (without Podman)
 

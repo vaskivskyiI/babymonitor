@@ -41,6 +41,10 @@ class FieldDef(BaseModel):
     # only for type == "entries": schema for each item in the repeatable list.
     # Every entry automatically also gets a "timestamp" (datetime).
     entry_fields: Optional[list["FieldDef"]] = None
+    # only within entry_fields: when adding a new entry, prefill this field
+    # from the *previous* entry's field of this name (e.g. a weight-before
+    # field carrying forward the previous entry's weight-after reading).
+    carry_from: Optional[str] = None
 
 
 FieldDef.model_rebuild()
@@ -63,6 +67,10 @@ class ChoreType:
     # default reminder interval in minutes; None = no "next due" tracking
     default_interval_minutes: Optional[int] = None
     interval_configurable: bool = True
+    # shown in Settings instead of a minutes input when interval_configurable
+    # is False but there's still a real (just non-numeric) reminder concept,
+    # e.g. probiotic's "once per calendar day"
+    fixed_reminder_note: Optional[str] = None
 
     # "Session" support: lets a chore type keep appending timestamped
     # checkpoints (via an "entries" field) to the same event instead of
@@ -95,7 +103,10 @@ class ChoreType:
     def numeric_fields(self) -> list[FieldDef]:
         return [f for f in self.fields if f.numeric_stat]
 
-    def next_due(self, last_timestamp: Optional[datetime], interval_minutes: Optional[int]) -> Optional[datetime]:
+    def next_due(self, last_timestamp: Optional[datetime], interval_minutes: Optional[int], tz) -> Optional[datetime]:
+        """`tz` is the profile's timezone, for chore types whose "next due"
+        depends on calendar days rather than a rolling interval (e.g.
+        `probiotic`'s once-per-day reset)."""
         if last_timestamp is None or not interval_minutes:
             return None
         return last_timestamp + timedelta(minutes=interval_minutes)
@@ -120,6 +131,7 @@ class ChoreType:
             "fields": [f.model_dump() for f in self.fields],
             "interval_minutes": interval_minutes,
             "interval_configurable": self.interval_configurable,
+            "fixed_reminder_note": self.fixed_reminder_note,
             "session_window_configurable": self.session_window_configurable,
             "session_window_minutes": session_window_minutes,
             "has_start_end": self.has_start_end,

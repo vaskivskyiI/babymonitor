@@ -29,7 +29,10 @@ class FeedingChoreType(ChoreType):
             name="entries",
             label="Checkpoints",
             type="entries",
-            help="Add one per weigh-in / switch / top-up as the feeding happens.",
+            help="Add one per switch / top-up as the feeding happens. Weigh before "
+            "and after each breast sub-step (dressed weight is fine - only the "
+            "difference is used) and the amount is calculated automatically; "
+            "the next sub-step's 'before' is pre-filled from this one's 'after'.",
             entry_fields=[
                 FieldDef(
                     name="method",
@@ -44,7 +47,14 @@ class FeedingChoreType(ChoreType):
                         FieldOption(value="formula", label="Formula"),
                     ],
                 ),
-                FieldDef(name="weight_g", label="Baby weight", type="number", unit="g"),
+                FieldDef(
+                    name="weight_before_g",
+                    label="Weight before",
+                    type="number",
+                    unit="g",
+                    carry_from="weight_after_g",
+                ),
+                FieldDef(name="weight_after_g", label="Weight after", type="number", unit="g"),
                 FieldDef(name="amount_ml", label="Amount", type="number", unit="ml"),
                 FieldDef(name="note", label="Note", type="text"),
             ],
@@ -81,12 +91,14 @@ class FeedingChoreType(ChoreType):
         entries.sort(key=lambda e: _parse_ts(e.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc))
         data["entries"] = entries
 
-        weights = [e["weight_g"] for e in entries if isinstance(e.get("weight_g"), (int, float))]
-        total_breast = None
-        if len(weights) >= 2:
-            delta = weights[-1] - weights[0]
-            if delta > 0:
-                total_breast = round(delta)
+        weighed_deltas = []
+        for e in entries:
+            wb, wa = e.get("weight_before_g"), e.get("weight_after_g")
+            if isinstance(wb, (int, float)) and isinstance(wa, (int, float)):
+                delta = wa - wb
+                if delta > 0:
+                    weighed_deltas.append(delta)
+        total_breast = round(sum(weighed_deltas)) if weighed_deltas else None
         if total_breast is None:
             manual = [
                 e["amount_ml"]

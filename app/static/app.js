@@ -313,9 +313,22 @@ function attachEntriesHandlers(form, field, initialEntries) {
     rowEl.querySelector(".entry-timestamp").value = toLocalInputValue(entry ? entry.timestamp : new Date());
     rowEl.querySelector(".remove-entry").addEventListener("click", () => rowEl.remove());
     rows.appendChild(rowEl);
+    return rowEl;
   }
   (initialEntries && initialEntries.length ? initialEntries : [null]).forEach(addRow);
-  wrap.querySelector(".add-entry-btn").addEventListener("click", () => addRow(null));
+  wrap.querySelector(".add-entry-btn").addEventListener("click", () => {
+    const prevRow = rows.lastElementChild;
+    const newRow = addRow(null);
+    // carry values forward from the previous row for any field with carry_from set
+    if (prevRow) {
+      field.entry_fields.forEach((f) => {
+        if (!f.carry_from) return;
+        const srcInput = prevRow.querySelector(`.entry-field[data-name="${f.carry_from}"]`);
+        const destInput = newRow.querySelector(`.entry-field[data-name="${f.name}"]`);
+        if (srcInput && destInput && srcInput.value !== "") destInput.value = srcInput.value;
+      });
+    }
+  });
 }
 
 function openForm(choreTypeKey, mode, event) {
@@ -851,7 +864,9 @@ async function loadSettings() {
         ${
           ct.interval_configurable
             ? `<label>Reminder <input type="number" min="0" class="interval-input" style="width:80px" value="${ct.interval_minutes ?? ""}"> min</label>`
-            : '<span style="color:var(--muted)">no reminder</span>'
+            : ct.fixed_reminder_note
+              ? `<span style="color:var(--muted)">${ct.fixed_reminder_note}</span>`
+              : '<span style="color:var(--muted)">no reminder</span>'
         }
         ${
           ct.session_window_configurable

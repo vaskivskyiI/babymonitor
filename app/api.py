@@ -265,7 +265,7 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
     last = db.execute(stmt).scalars().first()
     interval = _interval_minutes(db, ct)
     last_out = _event_out(ct, last) if last else None
-    next_due = ct.next_due(last_out.timestamp if last_out else None, interval)
+    next_due = ct.next_due(last_out.timestamp if last_out else None, interval, tz)
     overdue = bool(next_due and next_due < _now())
 
     active_session_event_id = None
