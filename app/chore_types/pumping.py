@@ -37,8 +37,8 @@ class PumpingChoreType(ChoreType):
                         FieldOption(value="both", label="Both"),
                     ],
                 ),
-                FieldDef(name="amount_ml", label="Amount", type="number", unit="ml"),
-                FieldDef(name="duration_min", label="Duration", type="number", unit="min"),
+                FieldDef(name="amount_ml", label="Amount", type="number", unit="ml", step=5),
+                FieldDef(name="duration_min", label="Duration", type="number", unit="min", step=1),
             ],
         ),
         FieldDef(

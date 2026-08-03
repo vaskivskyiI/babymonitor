@@ -26,6 +26,13 @@ class DiaperChoreType(ChoreType):
         FieldDef(name="notes", label="Notes", type="textarea"),
     ]
 
+    def quick_actions(self) -> list[dict]:
+        return [
+            {"label": "💧 Wet", "data": {"pee": True, "poop": False}},
+            {"label": "💩 Dirty", "data": {"pee": False, "poop": True}},
+            {"label": "💧💩 Both", "data": {"pee": True, "poop": True}},
+        ]
+
     def summarize(self, data: dict) -> str:
         parts = []
         if data.get("pee"):

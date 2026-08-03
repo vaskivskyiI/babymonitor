@@ -38,6 +38,9 @@ class FieldDef(BaseModel):
     stat_agg: str = "sum"
     # if true, the field is derived by compute_derived() and not user-editable
     computed: bool = False
+    # step size for the +/- stepper shown on "number" fields (also used
+    # within entries), so common values can be tapped instead of typed
+    step: float = 1
     # only for type == "entries": schema for each item in the repeatable list.
     # Every entry automatically also gets a "timestamp" (datetime).
     entry_fields: Optional[list["FieldDef"]] = None
@@ -71,6 +74,10 @@ class ChoreType:
     # is False but there's still a real (just non-numeric) reminder concept,
     # e.g. probiotic's "once per calendar day"
     fixed_reminder_note: Optional[str] = None
+    # True for "once per calendar day" reminders (resets at local midnight,
+    # not 24h after the last dose) - the frontend shows "Tomorrow" instead
+    # of a countdown when satisfied, and an overdue-by-24h reference when not
+    daily_reminder: bool = False
 
     # "Session" support: lets a chore type keep appending timestamped
     # checkpoints (via an "entries" field) to the same event instead of
@@ -95,6 +102,13 @@ class ChoreType:
     def is_open(self, data: dict) -> bool:
         """For has_start_end types: True if this event has no end recorded yet."""
         return False
+
+    def quick_actions(self) -> list[dict]:
+        """Optional one-tap dashboard presets: [{"label": str, "data": dict}].
+        Logged instantly with the current timestamp - no form needed. For
+        types where a form is unavoidable (numeric input, checkpoints),
+        leave this empty and rely on the regular log/checkpoint button."""
+        return []
 
     def summarize(self, data: dict) -> str:
         """Short human readable summary of an event, used in history/cards."""
@@ -132,9 +146,11 @@ class ChoreType:
             "interval_minutes": interval_minutes,
             "interval_configurable": self.interval_configurable,
             "fixed_reminder_note": self.fixed_reminder_note,
+            "daily_reminder": self.daily_reminder,
             "session_window_configurable": self.session_window_configurable,
             "session_window_minutes": session_window_minutes,
             "has_start_end": self.has_start_end,
+            "quick_actions": self.quick_actions(),
         }
 
 

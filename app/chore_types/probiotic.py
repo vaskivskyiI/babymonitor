@@ -15,6 +15,7 @@ class ProbioticChoreType(ChoreType):
     default_interval_minutes = None
     interval_configurable = False
     fixed_reminder_note = "Due once per calendar day"
+    daily_reminder = True
 
     fields = [
         FieldDef(name="notes", label="Notes", type="textarea"),
@@ -26,6 +27,9 @@ class ProbioticChoreType(ChoreType):
         local_last = last_timestamp.astimezone(tz)
         next_day_start = (local_last + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         return next_day_start.astimezone(timezone.utc)
+
+    def quick_actions(self) -> list[dict]:
+        return [{"label": "💊 Given", "data": {}}]
 
     def summarize(self, data: dict) -> str:
         return "💊 Given"

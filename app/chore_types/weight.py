@@ -24,6 +24,7 @@ class WeightChoreType(ChoreType):
             required=True,
             numeric_stat=True,
             stat_agg="last",
+            step=10,
         ),
         FieldDef(name="notes", label="Notes", type="textarea"),
     ]

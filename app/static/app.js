@@ -65,7 +65,7 @@ function initTabs() {
       btn.classList.add("active");
       document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
       if (btn.dataset.tab === "history") loadHistory();
-      if (btn.dataset.tab === "stats") loadStats();
+      if (btn.dataset.tab === "stats") showStatsOverview();
       if (btn.dataset.tab === "settings") loadSettings();
     });
   });
@@ -129,7 +129,11 @@ function renderBabyInfoBar(profile, statuses) {
 }
 
 async function loadDashboard() {
-  const [statuses, profile] = await Promise.all([api("/api/status"), api("/api/profile")]);
+  let [statuses, profile] = await Promise.all([api("/api/status"), api("/api/profile")]);
+  if (!state.tzSynced) {
+    profile = await syncTimezone(profile);
+    state.tzSynced = true;
+  }
   state.profile = profile;
   renderBabyInfoBar(profile, statuses);
   const container = document.getElementById("cards");
@@ -149,10 +153,37 @@ async function loadDashboard() {
         </div>`;
     }
 
-    let dueHtml = "";
-    if (s.next_due) {
-      dueHtml = `<div class="due ${s.overdue ? "overdue" : "ok"}">${s.overdue ? "Overdue by" : "Next"} ${fmtRelative(s.next_due).replace("ago", "").replace("in ", "")}</div>`;
+    let dueText = "";
+    let dueClass = "ok";
+    if (ct && ct.daily_reminder && s.last_event) {
+      // "once per day" reminders reset at local midnight, not 24h after the
+      // last dose - a live countdown-to-midnight isn't meaningful, so show
+      // "Tomorrow" once satisfied, or an overdue-by based on the last dose
+      // time + 24h (a more intuitive reference than "since midnight").
+      if (!s.overdue) {
+        dueText = "Next: tomorrow";
+      } else {
+        dueClass = "overdue";
+        const reference = s.last_event ? new Date(new Date(s.last_event.timestamp).getTime() + 24 * 3600 * 1000) : null;
+        dueText =
+          reference && reference <= new Date()
+            ? `Overdue by ${fmtRelative(reference.toISOString()).replace(" ago", "")}`
+            : "Due today";
+      }
+    } else if (s.next_due) {
+      dueClass = s.overdue ? "overdue" : "ok";
+      dueText = `${s.overdue ? "Overdue by" : "Next"} ${fmtRelative(s.next_due).replace("ago", "").replace("in ", "")}`;
     }
+    // "Set alarm" - only for a real future due time (a plain interval-based
+    // reminder, not the daily-reset kind, and not already overdue - there's
+    // nothing to count down to at that point).
+    const showAlarm = s.next_due && !s.overdue && !(ct && ct.daily_reminder);
+    const dueHtml = dueText
+      ? `<div class="due ${dueClass}">
+          <span>${dueText}</span>
+          ${showAlarm ? `<button type="button" class="alarm-btn" data-action="alarm" title="Add a calendar alarm for this">🔔</button>` : ""}
+        </div>`
+      : "";
 
     let buttonsHtml;
     let targetEventId = null;
@@ -169,6 +200,16 @@ async function loadDashboard() {
         <div class="row">
           <button class="quick-btn" data-action="checkpoint">+ Add checkpoint</button>
           <button class="quick-btn secondary-btn" data-action="new">+ New</button>
+        </div>`;
+    } else if (ct && ct.quick_actions && ct.quick_actions.length) {
+      // one-tap presets - logged instantly, no form. A small "+" opens the
+      // full form for anything that needs a note/backdated time.
+      buttonsHtml = `
+        <div class="quick-actions-row">
+          ${ct.quick_actions
+            .map((qa, i) => `<button class="quick-btn pill" data-quick="${i}">${qa.label}</button>`)
+            .join("")}
+          <button class="icon-btn more-btn" data-action="new" title="More options">+</button>
         </div>`;
     } else {
       buttonsHtml = `<button class="quick-btn" data-action="new">+ Log now</button>`;
@@ -189,11 +230,23 @@ async function loadDashboard() {
       ${todayHtml}
       ${buttonsHtml}
     `;
-    const defaultAction = card.querySelector("[data-action]")?.dataset.action || "new";
+    const defaultBtn = card.querySelector("[data-action]:not(.alarm-btn)");
+    const defaultAction = defaultBtn ? defaultBtn.dataset.action : "new";
     card.querySelectorAll("[data-action]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        handleCardAction(s.chore_type, btn.dataset.action, targetEventId);
+        if (btn.dataset.action === "alarm") {
+          downloadAlarmICS(s.label, s.next_due);
+        } else {
+          handleCardAction(s.chore_type, btn.dataset.action, targetEventId);
+        }
+      });
+    });
+    card.querySelectorAll("[data-quick]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const qa = ct.quick_actions[Number(btn.dataset.quick)];
+        logQuickAction(s.chore_type, qa);
       });
     });
     card.addEventListener("click", () => handleCardAction(s.chore_type, defaultAction, targetEventId));
@@ -208,6 +261,58 @@ async function handleCardAction(choreTypeKey, action, targetEventId) {
   } else {
     openForm(choreTypeKey, "create");
   }
+}
+
+async function logQuickAction(choreTypeKey, qa) {
+  try {
+    await api("/api/events", {
+      method: "POST",
+      body: JSON.stringify({ chore_type: choreTypeKey, data: qa.data }),
+    });
+    toast(qa.label + " logged");
+    refreshCurrentView();
+  } catch (err) {
+    toast("Error: " + err.message);
+  }
+}
+
+// "Set alarm" - downloads a .ics calendar event with an alarm trigger at the
+// due time. Real push notifications need HTTPS (not guaranteed on a home
+// LAN deployment); a calendar reminder works everywhere, no server involved.
+function downloadAlarmICS(title, dueIso) {
+  const dt = new Date(dueIso);
+  const pad = (n) => String(n).padStart(2, "0");
+  const fmt = (d) =>
+    `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+  const summary = `${title} due - Baby Monitor`;
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Baby Monitor//EN",
+    "BEGIN:VEVENT",
+    `UID:babymonitor-${Date.now()}@local`,
+    `DTSTAMP:${fmt(new Date())}`,
+    `DTSTART:${fmt(dt)}`,
+    `DTEND:${fmt(new Date(dt.getTime() + 5 * 60000))}`,
+    `SUMMARY:${summary}`,
+    "BEGIN:VALARM",
+    "TRIGGER:PT0M",
+    "ACTION:DISPLAY",
+    `DESCRIPTION:${summary}`,
+    "END:VALARM",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ];
+  const blob = new Blob([lines.join("\r\n")], { type: "text/calendar" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "babymonitor-alarm.ics";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  toast("Alarm downloaded - open it to add to your calendar");
 }
 
 // ---------- dynamic form ----------
@@ -463,7 +568,11 @@ function refreshCurrentView() {
   loadDashboard();
   const activeTab = document.querySelector(".tab-btn.active").dataset.tab;
   if (activeTab === "history") loadHistory();
-  if (activeTab === "stats") loadStats();
+  if (activeTab === "stats") {
+    const detailVisible = !document.getElementById("stats-detail").classList.contains("hidden");
+    if (detailVisible) loadStats();
+    else loadStatsOverview();
+  }
 }
 
 // ---------- history ----------
@@ -657,7 +766,85 @@ function svgLineChart({ actual = [], trend = [], idealLow = [], idealHigh = [], 
   return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="color:inherit">${svg}${todayLine}${labels}</svg>`;
 }
 
-async function loadStats() {
+// ---------- stats: at-a-glance overview ----------
+
+function svgSparkline(points, color) {
+  const vals = points.map((p) => p.value).filter((v) => v != null);
+  if (!vals.length) return '<div class="sparkline-empty">No data yet</div>';
+  const w = 120;
+  const h = 36;
+  const max = Math.max(...vals, 1);
+  const min = Math.min(...vals, 0);
+  const range = max - min || 1;
+  const step = w / Math.max(1, points.length - 1);
+  const coords = points.map((p, i) => {
+    const x = i * step;
+    const y = p.value == null ? null : h - ((p.value - min) / range) * (h - 4) - 2;
+    return { x, y };
+  });
+  const path = coords
+    .filter((c) => c.y != null)
+    .map((c, i) => `${i === 0 ? "M" : "L"}${c.x.toFixed(1)},${c.y.toFixed(1)}`)
+    .join(" ");
+  const lastVisible = [...coords].reverse().find((c) => c.y != null);
+  const dot = lastVisible ? `<circle cx="${lastVisible.x}" cy="${lastVisible.y}" r="2.5" fill="${color}"></circle>` : "";
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">
+      <path d="${path}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke"></path>
+      ${dot}
+    </svg>`;
+}
+
+async function showStatsOverview() {
+  document.getElementById("stats-overview").classList.remove("hidden");
+  document.getElementById("stats-detail").classList.add("hidden");
+  await loadStatsOverview();
+}
+
+function showStatsDetail(key) {
+  document.getElementById("stats-overview").classList.add("hidden");
+  document.getElementById("stats-detail").classList.remove("hidden");
+  loadStats(key);
+}
+
+async function loadStatsOverview() {
+  const box = document.getElementById("stats-overview");
+  box.innerHTML = '<p class="muted-note">Loading…</p>';
+  const results = await Promise.all(
+    state.choreTypes.map((ct) => api(`/api/stats/${ct.key}?all_time=true`).catch(() => null))
+  );
+  box.innerHTML = `<div class="overview-grid"></div>`;
+  const grid = box.querySelector(".overview-grid");
+  state.choreTypes.forEach((ct, i) => {
+    const data = results[i];
+    const card = document.createElement("div");
+    card.className = "overview-card";
+    let sparkHtml = '<div class="sparkline-empty">No data yet</div>';
+    let keyStat = "";
+    if (data && data.days.length) {
+      // pick the most meaningful numeric field for the sparkline: prefer a
+      // "last"-style reading (e.g. weight), else the first numeric field,
+      // else fall back to event counts
+      const field = ct.fields.find((f) => f.numeric_stat && f.stat_agg === "last") || ct.fields.find((f) => f.numeric_stat);
+      const points = data.days.map((d) => ({ date: d.date, value: field ? d[field.name] : d.count }));
+      sparkHtml = svgSparkline(points, "var(--primary)");
+      const lastVal = [...points].reverse().find((p) => p.value != null);
+      keyStat = field && lastVal ? `${lastVal.value}${field.unit || ""}` : `${data.total_events} total`;
+    }
+    card.innerHTML = `
+      <div class="overview-card-head">
+        <span class="overview-icon">${ct.icon}</span>
+        <span class="overview-label">${ct.label}</span>
+      </div>
+      <div class="overview-spark">${sparkHtml}</div>
+      <div class="overview-keystat">${keyStat}</div>
+    `;
+    card.addEventListener("click", () => showStatsDetail(ct.key));
+    grid.appendChild(card);
+  });
+  if (!state.choreTypes.length) box.innerHTML = '<p class="muted-note">No chore types yet.</p>';
+}
+
+async function loadStats(explicitKey) {
   const typeSelect = document.getElementById("stats-type");
   if (typeSelect.options.length === 0) {
     state.choreTypes.forEach((ct) => {
@@ -666,15 +853,16 @@ async function loadStats() {
       opt.textContent = `${ct.icon} ${ct.label}`;
       typeSelect.appendChild(opt);
     });
-    typeSelect.addEventListener("change", loadStats);
-    document.getElementById("stats-days").addEventListener("change", loadStats);
+    typeSelect.addEventListener("change", () => loadStats());
+    document.getElementById("stats-days").addEventListener("change", () => loadStats());
   }
-  const key = typeSelect.value || state.choreTypes[0]?.key;
+  const key = explicitKey || typeSelect.value || state.choreTypes[0]?.key;
   if (!key) return;
   typeSelect.value = key;
   const days = document.getElementById("stats-days").value;
+  const query = days === "all" ? "all_time=true" : `days=${days}`;
   const requestToken = (state.statsRequestToken = (state.statsRequestToken || 0) + 1);
-  const data = await api(`/api/stats/${key}?days=${days}`);
+  const data = await api(`/api/stats/${key}?${query}`);
   if (requestToken !== state.statsRequestToken) return; // a newer request superseded this one
 
   const summary = document.getElementById("stats-summary");
@@ -814,10 +1002,34 @@ async function loadFeedingCalculator(overrides = {}) {
 
 // ---------- profile ----------
 
+function detectedTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch (err) {
+    return "UTC";
+  }
+}
+
+// Silently keep the profile's timezone in sync with the browser/device -
+// no manual entry needed. Safe to call often; it's a no-op once they match.
+async function syncTimezone(profile) {
+  const detected = detectedTimezone();
+  if (!detected || detected === profile.timezone) return profile;
+  try {
+    return await api("/api/profile", {
+      method: "PUT",
+      body: JSON.stringify({ timezone: detected }),
+    });
+  } catch (err) {
+    return profile;
+  }
+}
+
 async function loadProfile() {
-  state.profile = await api("/api/profile");
+  let p = await api("/api/profile");
+  p = await syncTimezone(p);
+  state.profile = p;
   const box = document.getElementById("profile-box");
-  const p = state.profile;
   box.innerHTML = `
     <div class="settings-row profile-row">
       <div><strong>👶 Baby profile</strong>${p.age_days != null ? ` <span class="age-pill">${p.age_days} days old</span>` : ""}</div>
@@ -825,7 +1037,7 @@ async function loadProfile() {
         <label>Name <input type="text" id="profile-name" style="width:120px" value="${p.name || ""}"></label>
         <label>Birth date <input type="date" id="profile-birthdate" value="${p.birth_date || ""}"></label>
         <label>Birth weight (g) <input type="number" min="0" id="profile-birthweight" style="width:100px" value="${p.birth_weight_g ?? ""}"></label>
-        <label>Timezone <input type="text" id="profile-timezone" style="width:150px" placeholder="e.g. Europe/Ljubljana" value="${p.timezone || "UTC"}"></label>
+        <label>Timezone <span class="readonly-value" title="Auto-detected from your device">${p.timezone} 🌐</span></label>
         <button class="btn secondary" id="save-profile-btn">Save</button>
       </div>
     </div>`;
@@ -838,7 +1050,6 @@ async function loadProfile() {
           name: document.getElementById("profile-name").value || null,
           birth_date: document.getElementById("profile-birthdate").value || null,
           birth_weight_g: bw === "" ? null : Number(bw),
-          timezone: document.getElementById("profile-timezone").value || "UTC",
         }),
       });
       toast("Saved");
@@ -849,10 +1060,215 @@ async function loadProfile() {
   });
 }
 
+// ---------- chore type manager (add/edit/delete/reorder/enable) ----------
+
+const FIELD_TYPES = ["text", "number", "boolean", "select", "textarea"];
+
+async function loadChoreTypesManager() {
+  const box = document.getElementById("chore-types-manager");
+  const types = await api("/api/chore-types?include_disabled=true");
+  box.innerHTML = "";
+  types.forEach((ct, i) => {
+    const row = document.createElement("div");
+    row.className = "ct-manage-row" + (ct.enabled ? "" : " disabled");
+    row.innerHTML = `
+      <div class="ct-manage-order">
+        <button type="button" class="icon-btn" data-move="up" ${i === 0 ? "disabled" : ""}>▲</button>
+        <button type="button" class="icon-btn" data-move="down" ${i === types.length - 1 ? "disabled" : ""}>▼</button>
+      </div>
+      <div class="ct-manage-info">${ct.icon} <strong>${ct.label}</strong>${ct.is_builtin ? "" : ' <span class="custom-pill">custom</span>'}</div>
+      <div class="ct-manage-actions">
+        <label class="switch"><input type="checkbox" class="ct-enabled-toggle" ${ct.enabled ? "checked" : ""}><span class="slider"></span></label>
+        <button type="button" class="icon-btn ct-edit-btn" title="Edit">✏️</button>
+        ${!ct.is_builtin ? '<button type="button" class="icon-btn ct-delete-btn" title="Delete">🗑️</button>' : ""}
+      </div>`;
+    row.querySelector('[data-move="up"]').addEventListener("click", () => moveChoreType(types, i, -1));
+    row.querySelector('[data-move="down"]').addEventListener("click", () => moveChoreType(types, i, 1));
+    row.querySelector(".ct-enabled-toggle").addEventListener("change", async (e) => {
+      await api(`/api/chore-types/${ct.key}/meta`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled: e.target.checked }),
+      });
+      await loadChoreTypes();
+      loadChoreTypesManager();
+      loadDashboard();
+    });
+    row.querySelector(".ct-edit-btn").addEventListener("click", () => openChoreTypeBuilder(ct));
+    const delBtn = row.querySelector(".ct-delete-btn");
+    if (delBtn) {
+      delBtn.addEventListener("click", async () => {
+        if (!confirm(`Delete "${ct.label}"? This also deletes all of its logged events.`)) return;
+        await api(`/api/chore-types/${ct.key}`, { method: "DELETE" });
+        toast("Deleted");
+        await loadChoreTypes();
+        loadChoreTypesManager();
+        loadSettings();
+        loadDashboard();
+      });
+    }
+    box.appendChild(row);
+  });
+}
+
+async function moveChoreType(types, index, dir) {
+  const newIndex = index + dir;
+  if (newIndex < 0 || newIndex >= types.length) return;
+  const keys = types.map((t) => t.key);
+  [keys[index], keys[newIndex]] = [keys[newIndex], keys[index]];
+  await api("/api/chore-types/reorder", { method: "POST", body: JSON.stringify({ keys }) });
+  await loadChoreTypes();
+  loadChoreTypesManager();
+  loadDashboard();
+}
+
+function fieldBuilderRowHtml(f) {
+  const field = f || { name: "", label: "", type: "number", unit: "", numeric_stat: false, options: [] };
+  const optionsStr = (field.options || []).map((o) => `${o.value}:${o.label}`).join(", ");
+  return `<div class="field-builder-row">
+    <input type="text" class="cf-name" placeholder="field_name" value="${field.name}">
+    <input type="text" class="cf-label" placeholder="Label" value="${field.label}">
+    <select class="cf-type">
+      ${FIELD_TYPES.map((t) => `<option value="${t}" ${t === field.type ? "selected" : ""}>${t}</option>`).join("")}
+    </select>
+    <input type="text" class="cf-unit" placeholder="unit" value="${field.unit || ""}" style="width:70px">
+    <label class="cf-numeric"><input type="checkbox" class="cf-numeric-input" ${field.numeric_stat ? "checked" : ""}> track in stats</label>
+    <input type="text" class="cf-options" placeholder="options: value:Label, value2:Label2" value="${optionsStr}">
+    <button type="button" class="icon-btn cf-remove">✕</button>
+  </div>`;
+}
+
+function openChoreTypeBuilder(existing) {
+  const isCustomEdit = existing && !existing.is_builtin;
+  const isBuiltinEdit = existing && existing.is_builtin;
+  document.getElementById("ct-modal-title").textContent = existing ? `Edit ${existing.label}` : "Add chore type";
+  const form = document.getElementById("ct-modal-form");
+
+  if (isBuiltinEdit) {
+    // built-ins only allow renaming/re-iconing from here; their fields and
+    // behavior are code-defined
+    form.innerHTML = `
+      <div class="field"><label>Label</label><input type="text" id="ct-label" value="${existing.label}" required></div>
+      <div class="field"><label>Icon (emoji)</label><input type="text" id="ct-icon" value="${existing.icon}" required></div>
+      <div class="form-actions">
+        <button type="button" id="ct-cancel-btn" class="btn secondary">Cancel</button>
+        <button type="submit" class="btn">Save</button>
+      </div>`;
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      await api(`/api/chore-types/${existing.key}/meta`, {
+        method: "PUT",
+        body: JSON.stringify({
+          label_override: document.getElementById("ct-label").value,
+          icon_override: document.getElementById("ct-icon").value,
+        }),
+      });
+      toast("Saved");
+      closeChoreTypeModal();
+      await loadChoreTypes();
+      loadChoreTypesManager();
+      loadDashboard();
+    };
+  } else {
+    const fieldsRowsHtml = (existing ? existing.fields.filter((f) => !f.computed) : [null]).map(fieldBuilderRowHtml).join("");
+    form.innerHTML = `
+      <div class="field"><label>Label</label><input type="text" id="ct-label" value="${existing ? existing.label : ""}" required></div>
+      <div class="field"><label>Icon (emoji)</label><input type="text" id="ct-icon" value="${existing ? existing.icon : "🍼"}" required></div>
+      ${!isCustomEdit ? `<div class="field"><label>Key (no spaces, used internally)</label><input type="text" id="ct-key" placeholder="e.g. tummy_time" required></div>` : ""}
+      <div class="field"><label>Reminder interval (minutes, optional)</label><input type="number" min="0" id="ct-interval" value="${existing && existing.interval_minutes != null ? existing.interval_minutes : ""}"></div>
+      <div class="field">
+        <label>Fields</label>
+        <div id="ct-fields-rows">${fieldsRowsHtml}</div>
+        <button type="button" class="btn secondary" id="ct-add-field-btn">+ Add field</button>
+      </div>
+      <div class="form-actions">
+        <button type="button" id="ct-cancel-btn" class="btn secondary">Cancel</button>
+        <button type="submit" class="btn">Save</button>
+      </div>`;
+
+    const rowsBox = document.getElementById("ct-fields-rows");
+    function attachRemove(rowEl) {
+      rowEl.querySelector(".cf-remove").addEventListener("click", () => rowEl.remove());
+    }
+    rowsBox.querySelectorAll(".field-builder-row").forEach(attachRemove);
+    document.getElementById("ct-add-field-btn").addEventListener("click", () => {
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = fieldBuilderRowHtml(null);
+      const rowEl = wrapper.firstElementChild;
+      rowsBox.appendChild(rowEl);
+      attachRemove(rowEl);
+    });
+
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const fields = Array.from(rowsBox.querySelectorAll(".field-builder-row"))
+        .map((row) => {
+          const name = row.querySelector(".cf-name").value.trim();
+          if (!name) return null;
+          const type = row.querySelector(".cf-type").value;
+          const optionsStr = row.querySelector(".cf-options").value.trim();
+          const options =
+            type === "select" && optionsStr
+              ? optionsStr.split(",").map((pair) => {
+                  const [value, label] = pair.split(":").map((s) => s.trim());
+                  return { value, label: label || value };
+                })
+              : null;
+          return {
+            name,
+            label: row.querySelector(".cf-label").value.trim() || name,
+            type,
+            unit: row.querySelector(".cf-unit").value.trim() || null,
+            numeric_stat: row.querySelector(".cf-numeric-input").checked,
+            options,
+          };
+        })
+        .filter(Boolean);
+
+      const intervalRaw = document.getElementById("ct-interval").value;
+      const body = {
+        label: document.getElementById("ct-label").value,
+        icon: document.getElementById("ct-icon").value,
+        fields,
+        interval_minutes: intervalRaw === "" ? null : Number(intervalRaw),
+      };
+
+      try {
+        if (isCustomEdit) {
+          await api(`/api/chore-types/${existing.key}/definition`, { method: "PUT", body: JSON.stringify(body) });
+        } else {
+          const key = document.getElementById("ct-key").value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
+          await api("/api/chore-types", { method: "POST", body: JSON.stringify({ key, ...body }) });
+        }
+        toast("Saved");
+        closeChoreTypeModal();
+        await loadChoreTypes();
+        loadChoreTypesManager();
+        loadDashboard();
+      } catch (err) {
+        toast("Error: " + err.message);
+      }
+    };
+  }
+
+  document.getElementById("ct-cancel-btn").addEventListener("click", closeChoreTypeModal);
+  document.getElementById("ct-modal-backdrop").classList.remove("hidden");
+}
+
+function closeChoreTypeModal() {
+  document.getElementById("ct-modal-backdrop").classList.add("hidden");
+}
+
+document.getElementById("add-chore-type-btn").addEventListener("click", () => openChoreTypeBuilder(null));
+document.getElementById("ct-modal-close").addEventListener("click", closeChoreTypeModal);
+document.getElementById("ct-modal-backdrop").addEventListener("click", (e) => {
+  if (e.target.id === "ct-modal-backdrop") closeChoreTypeModal();
+});
+
 // ---------- settings ----------
 
 async function loadSettings() {
   await loadProfile();
+  await loadChoreTypesManager();
   const list = document.getElementById("settings-list");
   list.innerHTML = "";
   state.choreTypes.forEach((ct) => {
@@ -907,6 +1323,7 @@ document.getElementById("modal-close").addEventListener("click", closeModal);
 document.getElementById("modal-backdrop").addEventListener("click", (e) => {
   if (e.target.id === "modal-backdrop") closeModal();
 });
+document.getElementById("stats-back-btn").addEventListener("click", showStatsOverview);
 
 initTabs();
 (async function init() {

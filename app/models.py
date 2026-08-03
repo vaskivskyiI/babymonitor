@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -39,3 +39,32 @@ class Setting(Base):
 
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class ChoreTypeMeta(Base):
+    """Per-chore-type display/ordering overrides - applies to both builtin
+    (Python-defined) and custom (user-defined) chore types."""
+
+    __tablename__ = "chore_type_meta"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    label_override: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    icon_override: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+
+class CustomChoreType(Base):
+    """A user-defined chore type created from the app's Settings tab. Simple
+    declarative fields only (text/number/boolean/select/textarea) - no
+    sessions/start-end/derived-stats behavior, which remain Python plugins
+    under app/chore_types/."""
+
+    __tablename__ = "custom_chore_types"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(128))
+    icon: Mapped[str] = mapped_column(String(16))
+    fields_json: Mapped[list] = mapped_column(JSON, default=list)
+    interval_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

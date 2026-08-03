@@ -61,3 +61,37 @@ class ProfileUpdate(BaseModel):
     birth_date: Optional[date] = None
     birth_weight_g: Optional[float] = None
     timezone: Optional[str] = None
+
+
+class CustomFieldIn(BaseModel):
+    name: str
+    label: str
+    type: str  # text | number | boolean | select | textarea
+    unit: Optional[str] = None
+    numeric_stat: bool = False
+    options: Optional[list[dict]] = None  # [{value,label}]
+
+
+class CustomChoreTypeCreate(BaseModel):
+    key: str
+    label: str
+    icon: str
+    fields: list[CustomFieldIn] = []
+    interval_minutes: Optional[int] = None
+
+
+class CustomChoreTypeUpdate(BaseModel):
+    label: Optional[str] = None
+    icon: Optional[str] = None
+    fields: Optional[list[CustomFieldIn]] = None
+    interval_minutes: Optional[int] = None
+
+
+class ChoreTypeMetaUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    label_override: Optional[str] = None
+    icon_override: Optional[str] = None
+
+
+class ReorderRequest(BaseModel):
+    keys: list[str]

@@ -41,23 +41,35 @@
   </section>
 
   <section id="tab-stats" class="tab-panel">
-    <div class="row filter-row">
-      <select id="stats-type"></select>
-      <select id="stats-days">
-        <option value="1">Last 24h</option>
-        <option value="7" selected>Last 7 days</option>
-        <option value="14">Last 14 days</option>
-        <option value="30">Last 30 days</option>
-        <option value="90">Last 90 days</option>
-      </select>
+    <div id="stats-overview"></div>
+    <div id="stats-detail" class="hidden">
+      <div class="row filter-row">
+        <button id="stats-back-btn" class="btn secondary">← All</button>
+        <select id="stats-type"></select>
+        <select id="stats-days">
+          <option value="1">Last 24h</option>
+          <option value="7">Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="90" selected>Last 90 days</option>
+          <option value="365">Last year</option>
+          <option value="all">All time</option>
+        </select>
+      </div>
+      <div id="stats-summary" class="stats-summary"></div>
+      <div id="calculator-box" class="hidden"></div>
+      <div id="stats-charts"></div>
     </div>
-    <div id="stats-summary" class="stats-summary"></div>
-    <div id="calculator-box" class="hidden"></div>
-    <div id="stats-charts"></div>
   </section>
 
   <section id="tab-settings" class="tab-panel">
     <div id="profile-box" class="profile-box"></div>
+    <div class="section-heading">
+      <h2>Chore types</h2>
+      <button id="add-chore-type-btn" class="btn secondary">+ Add</button>
+    </div>
+    <div id="chore-types-manager" class="chore-types-manager"></div>
+    <div class="section-heading"><h2>Reminders</h2></div>
     <div id="settings-list" class="settings-list"></div>
   </section>
 </main>
@@ -69,6 +81,16 @@
       <button id="modal-close" class="icon-btn">✕</button>
     </div>
     <form id="modal-form"></form>
+  </div>
+</div>
+
+<div id="ct-modal-backdrop" class="modal-backdrop hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="ct-modal-title">Add chore type</h2>
+      <button id="ct-modal-close" class="icon-btn">✕</button>
+    </div>
+    <form id="ct-modal-form"></form>
   </div>
 </div>
 

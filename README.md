@@ -30,9 +30,28 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   given. It's due once per *calendar day*, not "24 hours since last
   dose" - so giving it early one day doesn't push tomorrow's reminder
   later; it resets at local midnight and the dashboard flags it overdue
-  automatically, same as any other reminder.
+  automatically, same as any other reminder. The dashboard shows a plain
+  "Tomorrow" once it's done for the day rather than a countdown to
+  midnight, and while it's still due today shows how overdue relative to
+  ~24h after the last dose (a more intuitive reference than "since
+  midnight").
+- **One-tap quick actions**: diaper (wet/dirty/both) and probiotic log
+  instantly from the dashboard with a single tap - no form, no typing.
+  Number fields elsewhere (weight, amounts) use large +/- steppers sized
+  per field, so most logging never needs the keyboard at all.
+- **Set an alarm for the next feed** (or any reminder): tap the 🔔 next
+  to a "Next due" time to download a calendar event with an alarm at
+  that moment - works on any phone via its own Calendar app, no push
+  infrastructure or HTTPS required.
 - **Baby info bar**: the Dashboard leads with the baby's name, current
   age, latest weight and latest height at a glance.
+- **Add your own chore types from the app** - no code required. Settings
+  → Chore types → "+ Add": give it a label, icon, an optional reminder
+  interval, and a few fields (text/number/boolean/select/textarea, with
+  "track in stats" for anything that should show up in Today/Stats). All
+  chore types - built-in or custom - can be renamed, re-ordered
+  (▲/▼), and hidden without deleting their history; only custom ones can
+  be deleted outright.
 - **Feeding calculator**: on the Stats tab, suggested amount per
   feed/day, feeds per day, and interval between feeds for the baby's
   current age (and a weight-based formula estimate if a recent weight is
@@ -40,10 +59,11 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
 - **Installable as an app (PWA)**: add it to your phone's home screen
   (Safari: Share → Add to Home Screen; Chrome: menu → Install app) for a
   full-screen, app-like experience with an icon - no app store needed.
-- **Baby profile**: set a birth date (+ name, timezone) in Settings. Once
-  set, the dashboard shows the baby's age, stats charts are labeled with
-  age-in-days alongside the date, and "today" totals/day-bucketing use
-  the configured timezone instead of UTC.
+- **Baby profile**: set a birth date (+ name) in Settings. Once set, the
+  dashboard shows the baby's age and stats charts are labeled with
+  age-in-days alongside the date. Timezone is detected automatically
+  from the browser/device (no manual entry) and kept in sync, driving
+  "today" totals and day-bucketing.
 - **Normal-range guidance**: wet/poopy diaper counts per day and weight
   gain (g/day) charts are shown against a shaded band for commonly-cited
   pediatric ranges (by the baby's age), with a source link. This is
@@ -53,12 +73,18 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
 - Dashboard shows time since last event, time until the next one is due
   (per chore type, based on a configurable interval), and today's totals
   (e.g. wet/poopy diaper counts, ml fed, latest weight).
-- History view to browse/edit/delete past events.
-- Stats view with per-day charts (event counts, amounts, average
-  interval between events, total food/day) over 24h/7d/14d/30d/90d. The
-  weight chart is date-scaled (not just evenly-spaced buckets) and shows
-  a linear-regression trend extrapolated a bit into the future alongside
-  an "ideal" age-based growth band (anchored at birth weight if set).
+- History view to browse/edit/delete past events, always sorted
+  chronologically by event time regardless of the order they were
+  entered in (so backdating one doesn't leave it out of place).
+- **Stats**: an at-a-glance overview grid (one card per chore type, each
+  with a sparkline and its latest/key number over all recorded history)
+  is the default landing view - tap a card to drill into full detail
+  charts (event counts, amounts, average interval, total food/day) with
+  a period selector defaulting to a long range (90 days; also
+  24h/7d/14d/30d/1y/all time). The weight chart is date-scaled (not just
+  evenly-spaced buckets) and shows a linear-regression trend extrapolated
+  a bit into the future alongside an "ideal" age-based growth band
+  (anchored at birth weight if set).
 - **Fully modular**: chore types are plugins under `app/chore_types/`.
   The frontend renders forms and charts generically from each type's
   field definitions - adding a new chore type requires no frontend
@@ -254,14 +280,19 @@ done in the app's Settings tab.
 
 ## API overview
 
-- `GET /api/chore-types` - list chore types with their field schemas
+- `GET /api/chore-types?include_disabled=` - list chore types (built-in + custom) with field schemas, in display order
+- `POST /api/chore-types` - create a custom chore type `{key, label, icon, fields, interval_minutes?}`
+- `PUT /api/chore-types/{key}/definition` - edit a custom chore type's label/icon/fields/interval
+- `PUT /api/chore-types/{key}/meta` - rename/re-icon/enable/disable any chore type (built-in or custom)
+- `POST /api/chore-types/reorder` - `{keys: [...]}` in the desired display order
+- `DELETE /api/chore-types/{key}` - delete a custom chore type and its events (built-ins can only be disabled)
 - `PUT /api/chore-types/{key}/settings` - set reminder interval / session window (minutes)
-- `GET /api/profile` / `PUT /api/profile` - baby's name, birth date, timezone (drives age display and day-bucketing)
+- `GET /api/profile` / `PUT /api/profile` (partial updates supported) - baby's name, birth date, birth weight, timezone (auto-synced from the browser; drives age display and day-bucketing)
 - `POST /api/events` - log an event `{chore_type, timestamp?, data, notes?}`
 - `GET /api/events?chore_type=&since=&until=&limit=` - list events
 - `GET/PUT/DELETE /api/events/{id}` - fetch/edit/delete a single event
 - `GET /api/status` / `GET /api/status/{key}` - last event, next due time, active session id, `open_event_id` (for start/end types like sleep), and today's totals per numeric field
-- `GET /api/stats/{key}?days=7` - daily aggregation for charts (zero-filled for every calendar day in range), incl. `age_days`, `<field>_ref_min`/`_ref_max` reference-range bands where available, and `growth_rate`/`trend`/`ideal` for `weight`
+- `GET /api/stats/{key}?days=90` or `?all_time=true` - daily aggregation for charts (zero-filled for every calendar day in range), incl. `age_days`, `<field>_ref_min`/`_ref_max` reference-range bands where available, and `growth_rate`/`trend`/`ideal` for `weight`
 - `GET /api/calculators/feeding?age_days=&weight_g=` - suggested feeding amounts/interval for an age (defaults to the profile's age and latest weight if omitted)
 
 Interactive OpenAPI docs are available at `/docs`.
@@ -297,7 +328,16 @@ disclaimer are shown next to each chart. To adjust or add ranges, edit
 
 ## Adding a new chore type
 
-Create `app/chore_types/mytype.py`:
+**From the app, no code needed:** Settings → Chore types → "+ Add" - give
+it a label, icon, optional reminder interval, and a few fields. This
+covers most simple trackers (a checkbox, a number, a dropdown). It's
+stored in the database (`custom_chore_types` table) and merged into the
+same registry as the built-in types at request time - it shows up on the
+Dashboard/History/Stats exactly like any other type, just without
+sessions/start-end/derived-stats behavior (those need code, below).
+
+**In code**, for anything needing custom logic (sessions, start/end,
+derived fields, extra stats series): create `app/chore_types/mytype.py`:
 
 ```python
 from app.chore_types.base import ChoreType, FieldDef, register

@@ -19,6 +19,7 @@ class HeightChoreType(ChoreType):
             required=True,
             numeric_stat=True,
             stat_agg="last",
+            step=0.5,
         ),
         FieldDef(name="notes", label="Notes", type="textarea"),
     ]

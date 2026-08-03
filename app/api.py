@@ -1,3 +1,4 @@
+import copy
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -6,17 +7,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.chore_types.base import REGISTRY
+from app.chore_types.base import REGISTRY, ChoreType, FieldDef, FieldOption
+from app.custom_types import DynamicChoreType
 from app.db import get_db
 from app.feeding_guidance import feeding_guidance
-from app.models import Event, Setting, as_utc
+from app.models import ChoreTypeMeta, CustomChoreType, Event, Setting, as_utc
 from app.reference_ranges import reference_range
 from app.schemas import (
+    ChoreTypeMetaUpdate,
+    CustomChoreTypeCreate,
+    CustomChoreTypeUpdate,
     EventCreate,
     EventOut,
     EventUpdate,
     ProfileOut,
     ProfileUpdate,
+    ReorderRequest,
     SettingsUpdate,
     StatusOut,
 )
@@ -30,11 +36,70 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _get_chore_type(key: str):
+def _custom_chore_type(row: CustomChoreType) -> DynamicChoreType:
+    fields = []
+    for f in row.fields_json:
+        f = dict(f)
+        if f.get("options"):
+            f["options"] = [FieldOption(**o) for o in f["options"]]
+        fields.append(FieldDef(**f))
+    return DynamicChoreType(row.key, row.label, row.icon, fields, row.interval_minutes)
+
+
+def _get_chore_type(key: str, db: Session | None = None):
+    """Look up a chore type by key: builtin Python plugins first, then
+    custom (DB-defined) types. Works regardless of enabled/sort state -
+    that's only applied when *listing* types."""
     ct = REGISTRY.get(key)
+    if ct is not None:
+        ct = copy.copy(ct)
+    elif db is not None:
+        row = db.get(CustomChoreType, key)
+        if row is not None:
+            ct = _custom_chore_type(row)
     if ct is None:
         raise HTTPException(404, f"Unknown chore type '{key}'")
+    if db is not None:
+        m = db.get(ChoreTypeMeta, key)
+        if m:
+            if m.label_override:
+                ct.label = m.label_override
+            if m.icon_override:
+                ct.icon = m.icon_override
     return ct
+
+
+def _all_chore_type_metas(db: Session) -> dict[str, ChoreTypeMeta]:
+    return {m.key: m for m in db.execute(select(ChoreTypeMeta)).scalars().all()}
+
+
+def _effective_chore_types(db: Session, enabled_only: bool = True) -> list[ChoreType]:
+    """Builtin + custom chore types, merged, with label/icon overrides
+    applied and sorted/filtered per ChoreTypeMeta."""
+    metas = _all_chore_type_metas(db)
+    # shallow-copy builtins so label/icon overrides never leak into the
+    # shared REGISTRY singletons used elsewhere in the process
+    items: list[ChoreType] = [copy.copy(ct) for ct in REGISTRY.values()]
+    items += [_custom_chore_type(c) for c in db.execute(select(CustomChoreType)).scalars().all()]
+
+    def sort_key(ct: ChoreType):
+        m = metas.get(ct.key)
+        return (m.sort_order if m else 10_000, ct.key)
+
+    items.sort(key=sort_key)
+
+    result = []
+    for ct in items:
+        m = metas.get(ct.key)
+        if m:
+            if enabled_only and not m.enabled:
+                continue
+            if m.label_override:
+                ct.label = m.label_override
+            if m.icon_override:
+                ct.icon = m.icon_override
+        result.append(ct)
+    return result
 
 
 def _interval_minutes(db: Session, ct) -> int | None:
@@ -110,12 +175,16 @@ def get_profile(db: Session = Depends(get_db)):
 
 @router.put("/profile", response_model=ProfileOut)
 def update_profile(body: ProfileUpdate, db: Session = Depends(get_db)):
-    value = {
-        "name": body.name,
-        "birth_date": body.birth_date.isoformat() if body.birth_date else None,
-        "birth_weight_g": body.birth_weight_g,
-        "timezone": body.timezone or "UTC",
-    }
+    value = _get_profile_dict(db)
+    fields_set = body.model_fields_set
+    if "name" in fields_set:
+        value["name"] = body.name
+    if "birth_date" in fields_set:
+        value["birth_date"] = body.birth_date.isoformat() if body.birth_date else None
+    if "birth_weight_g" in fields_set:
+        value["birth_weight_g"] = body.birth_weight_g
+    if "timezone" in fields_set:
+        value["timezone"] = body.timezone or "UTC"
     _set_setting(db, PROFILE_KEY, value)
     db.commit()
     return get_profile(db)
@@ -144,16 +213,108 @@ def calculator_feeding(
 
 
 @router.get("/chore-types")
-def list_chore_types(db: Session = Depends(get_db)):
+def list_chore_types(include_disabled: bool = False, db: Session = Depends(get_db)):
+    metas = _all_chore_type_metas(db)
     return [
-        ct.as_dict(_interval_minutes(db, ct), _session_window_minutes(db, ct))
-        for ct in REGISTRY.values()
+        {
+            **ct.as_dict(_interval_minutes(db, ct), _session_window_minutes(db, ct)),
+            "is_builtin": ct.key in REGISTRY,
+            "enabled": metas[ct.key].enabled if ct.key in metas else True,
+        }
+        for ct in _effective_chore_types(db, enabled_only=not include_disabled)
     ]
+
+
+@router.post("/chore-types")
+def create_custom_chore_type(body: CustomChoreTypeCreate, db: Session = Depends(get_db)):
+    if body.key in REGISTRY or db.get(CustomChoreType, body.key):
+        raise HTTPException(409, f"Chore type '{body.key}' already exists")
+    if not body.key.isidentifier() or not body.key.islower():
+        raise HTTPException(400, "Key must be lowercase letters/numbers/underscores, e.g. 'tummy_time'")
+    row = CustomChoreType(
+        key=body.key,
+        label=body.label,
+        icon=body.icon,
+        fields_json=[f.model_dump() for f in body.fields],
+        interval_minutes=body.interval_minutes,
+    )
+    db.add(row)
+    # place new types at the end of the list
+    max_order = db.execute(select(ChoreTypeMeta)).scalars().all()
+    next_order = (max((m.sort_order for m in max_order), default=-1)) + 1
+    db.add(ChoreTypeMeta(key=body.key, sort_order=next_order, enabled=True))
+    db.commit()
+    return _get_chore_type(body.key, db).as_dict(body.interval_minutes)
+
+
+@router.put("/chore-types/{key}/definition")
+def update_custom_chore_type(key: str, body: CustomChoreTypeUpdate, db: Session = Depends(get_db)):
+    row = db.get(CustomChoreType, key)
+    if row is None:
+        raise HTTPException(404, f"'{key}' is not a custom chore type (built-in types can only have their "
+                                  f"label/icon/order/enabled changed via PUT /api/chore-types/{{key}}/meta)")
+    if body.label is not None:
+        row.label = body.label
+    if body.icon is not None:
+        row.icon = body.icon
+    if body.fields is not None:
+        row.fields_json = [f.model_dump() for f in body.fields]
+    if "interval_minutes" in body.model_fields_set:
+        row.interval_minutes = body.interval_minutes
+    db.commit()
+    return _get_chore_type(key, db).as_dict(row.interval_minutes)
+
+
+@router.put("/chore-types/{key}/meta")
+def update_chore_type_meta(key: str, body: ChoreTypeMetaUpdate, db: Session = Depends(get_db)):
+    _get_chore_type(key, db)  # 404s if the key doesn't exist at all
+    m = db.get(ChoreTypeMeta, key)
+    if m is None:
+        m = ChoreTypeMeta(key=key, sort_order=0)
+        db.add(m)
+    if body.enabled is not None:
+        m.enabled = body.enabled
+    if "label_override" in body.model_fields_set:
+        m.label_override = body.label_override
+    if "icon_override" in body.model_fields_set:
+        m.icon_override = body.icon_override
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/chore-types/reorder")
+def reorder_chore_types(body: ReorderRequest, db: Session = Depends(get_db)):
+    metas = _all_chore_type_metas(db)
+    for i, key in enumerate(body.keys):
+        m = metas.get(key)
+        if m is None:
+            m = ChoreTypeMeta(key=key, sort_order=i, enabled=True)
+            db.add(m)
+        else:
+            m.sort_order = i
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/chore-types/{key}")
+def delete_custom_chore_type(key: str, db: Session = Depends(get_db)):
+    row = db.get(CustomChoreType, key)
+    if row is None:
+        raise HTTPException(400, "Only custom chore types can be deleted (built-in types can be disabled instead)")
+    deleted_events = db.execute(select(Event).where(Event.chore_type == key)).scalars().all()
+    for e in deleted_events:
+        db.delete(e)
+    db.delete(row)
+    meta = db.get(ChoreTypeMeta, key)
+    if meta:
+        db.delete(meta)
+    db.commit()
+    return {"ok": True, "deleted_events": len(deleted_events)}
 
 
 @router.put("/chore-types/{key}/settings")
 def update_settings(key: str, body: SettingsUpdate, db: Session = Depends(get_db)):
-    ct = _get_chore_type(key)
+    ct = _get_chore_type(key, db)
     _set_setting(db, f"interval:{ct.key}", {"interval_minutes": body.interval_minutes})
     if ct.session_window_configurable:
         _set_setting(
@@ -165,7 +326,7 @@ def update_settings(key: str, body: SettingsUpdate, db: Session = Depends(get_db
 
 @router.post("/events", response_model=EventOut)
 def create_event(body: EventCreate, db: Session = Depends(get_db)):
-    ct = _get_chore_type(body.chore_type)
+    ct = _get_chore_type(body.chore_type, db)
     timestamp = body.timestamp or _now()
     data = ct.compute_derived(dict(body.data), timestamp)
     event = Event(
@@ -196,7 +357,7 @@ def list_events(
     if until:
         stmt = stmt.where(Event.timestamp <= until)
     events = db.execute(stmt).scalars().all()
-    return [_event_out(_get_chore_type(e.chore_type), e) for e in events]
+    return [_event_out(_get_chore_type(e.chore_type, db), e) for e in events]
 
 
 @router.get("/events/{event_id}", response_model=EventOut)
@@ -204,7 +365,7 @@ def get_event(event_id: int, db: Session = Depends(get_db)):
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(404, "Event not found")
-    return _event_out(_get_chore_type(event.chore_type), event)
+    return _event_out(_get_chore_type(event.chore_type, db), event)
 
 
 @router.put("/events/{event_id}", response_model=EventOut)
@@ -212,7 +373,7 @@ def update_event(event_id: int, body: EventUpdate, db: Session = Depends(get_db)
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(404, "Event not found")
-    ct = _get_chore_type(event.chore_type)
+    ct = _get_chore_type(event.chore_type, db)
     if body.timestamp is not None:
         event.timestamp = body.timestamp
     if body.data is not None:
@@ -308,22 +469,34 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
 @router.get("/status", response_model=list[StatusOut])
 def status_all(db: Session = Depends(get_db)):
     tz = _profile_timezone(_get_profile_dict(db))
-    return [_status_for(ct, db, tz) for ct in REGISTRY.values()]
+    return [_status_for(ct, db, tz) for ct in _effective_chore_types(db, enabled_only=True)]
 
 
 @router.get("/status/{key}", response_model=StatusOut)
 def status_one(key: str, db: Session = Depends(get_db)):
-    ct = _get_chore_type(key)
+    ct = _get_chore_type(key, db)
     tz = _profile_timezone(_get_profile_dict(db))
     return _status_for(ct, db, tz)
 
 
 @router.get("/stats/{key}")
-def stats(key: str, days: int = Query(7, le=90), db: Session = Depends(get_db)):
-    ct = _get_chore_type(key)
+def stats(
+    key: str,
+    days: int = Query(90, le=3650),
+    all_time: bool = False,
+    db: Session = Depends(get_db),
+):
+    ct = _get_chore_type(key, db)
     profile = _get_profile_dict(db)
     tz = _profile_timezone(profile)
-    since = _now() - timedelta(days=days)
+    if all_time:
+        first_stmt = (
+            select(Event).where(Event.chore_type == ct.key).order_by(Event.timestamp.asc()).limit(1)
+        )
+        first = db.execute(first_stmt).scalars().first()
+        since = as_utc(first.timestamp) if first else _now()
+    else:
+        since = _now() - timedelta(days=days)
     stmt = (
         select(Event)
         .where(Event.chore_type == ct.key, Event.timestamp >= since)
