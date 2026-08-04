@@ -11,16 +11,18 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
 - **Feeding**: a feeding is a *session* you build up as it happens. Add as
   many timestamped checkpoints as you like (breast - either side or
   unspecified - or formula) while the feeding is in progress - switching
-  breasts, topping up with formula, etc. Weigh before and after each
-  breast sub-step (the reading doesn't need to be the baby's real weight -
+  breasts, topping up with formula, etc. Weigh before and after a breast
+  sub-step (the reading doesn't need to be the baby's real weight -
   dressed weight on a kitchen/bathroom scale is fine, only the difference
-  matters) and the amount is calculated automatically; each new
-  sub-step's "weight before" is pre-filled from the previous one's
-  "weight after", so you're not retyping the same number. Formula amount
-  is summed separately. The dashboard offers "+ Add checkpoint" instead
-  of "+ Log now" while a feeding is still open (within a configurable
-  session window, default 45 min since the last checkpoint), and "+ New"
-  to start a separate feeding anyway.
+  matters) and the amount is calculated automatically, with the next
+  sub-step's "weight before" pre-filled from this one's "weight after" -
+  or skip weighing entirely and type the amount directly, e.g. a bottle
+  of previously pumped milk. Each sub-step contributes its own amount
+  (weighed or typed) to the total, so a session can freely mix both.
+  Formula amount is summed separately. The dashboard offers "+ Add
+  checkpoint" instead of "+ Log now" while a feeding is still open
+  (within a configurable session window, default 45 min since the last
+  checkpoint), and "+ New" to start a separate feeding anyway.
 - **Sleep**: tap "Start Sleep" / "End Sleep" - duration is calculated
   automatically from the two timestamps, no manual entry, and displayed
   as "2h 15m" rather than raw minutes once it's over 90 min.
@@ -40,6 +42,10 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   instantly from the dashboard with a single tap - no form, no typing.
   Number fields elsewhere (weight, amounts) use large +/- steppers sized
   per field, so most logging never needs the keyboard at all.
+- **Fast edit of the previous entry**: every dashboard card's last-event
+  line has a ✏️ that jumps straight to editing that entry - e.g. log
+  "started pumping" with just a side selected, then tap ✏️ later to fill
+  in the amount, no need to go through History.
 - **Set an alarm for the next feed** (or any reminder): tap the 🔔 next
   to a "Next due" time to download a calendar event with an alarm at
   that moment - works on any phone via its own Calendar app, no push

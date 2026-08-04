@@ -66,5 +66,5 @@ class PumpingChoreType(ChoreType):
         entries = data.get("entries") or []
         summary = f"🍶 {total}ml" if total else "🍶 Pumping"
         if len(entries) > 1:
-            summary += f" ({len(entries)} sub-steps)"
+            summary += f" ×{len(entries)}"
         return summary

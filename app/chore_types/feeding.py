@@ -30,9 +30,11 @@ class FeedingChoreType(ChoreType):
             label="Checkpoints",
             type="entries",
             help="Add one per switch / top-up as the feeding happens. Weigh before "
-            "and after each breast sub-step (dressed weight is fine - only the "
-            "difference is used) and the amount is calculated automatically; "
-            "the next sub-step's 'before' is pre-filled from this one's 'after'.",
+            "and after a breast sub-step (dressed weight is fine - only the "
+            "difference is used) and the amount is calculated automatically - or "
+            "skip weighing and enter Amount directly (e.g. a bottle of previously "
+            "pumped milk). The next sub-step's 'before' is pre-filled from this "
+            "one's 'after'.",
             entry_fields=[
                 FieldDef(
                     name="method",
@@ -56,7 +58,15 @@ class FeedingChoreType(ChoreType):
                     step=5,
                 ),
                 FieldDef(name="weight_after_g", label="Weight after", type="number", unit="g", step=5),
-                FieldDef(name="amount_ml", label="Amount", type="number", unit="ml", step=5),
+                FieldDef(
+                    name="amount_ml",
+                    label="Amount",
+                    type="number",
+                    unit="ml",
+                    step=5,
+                    help="For formula, or breast milk you already know the amount of "
+                    "(e.g. a bottle of previously pumped milk) - skip weighing and enter it directly.",
+                ),
                 FieldDef(name="note", label="Note", type="text"),
             ],
         ),
@@ -92,23 +102,28 @@ class FeedingChoreType(ChoreType):
         entries.sort(key=lambda e: _parse_ts(e.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc))
         data["entries"] = entries
 
-        weighed_deltas = []
+        # Each sub-step contributes its own amount independently - a
+        # weight-before/after difference if both are present, otherwise a
+        # manually-entered amount_ml (e.g. a bottle of previously pumped
+        # milk). This lets a single feeding mix nursing (weighed) and
+        # already-measured breast milk (typed ml) and still total correctly.
+        breast_total = 0.0
+        has_breast_amount = False
         for e in entries:
+            if not str(e.get("method", "")).startswith("breast"):
+                continue
             wb, wa = e.get("weight_before_g"), e.get("weight_after_g")
+            amount = None
             if isinstance(wb, (int, float)) and isinstance(wa, (int, float)):
                 delta = wa - wb
                 if delta > 0:
-                    weighed_deltas.append(delta)
-        total_breast = round(sum(weighed_deltas)) if weighed_deltas else None
-        if total_breast is None:
-            manual = [
-                e["amount_ml"]
-                for e in entries
-                if str(e.get("method", "")).startswith("breast") and isinstance(e.get("amount_ml"), (int, float))
-            ]
-            if manual:
-                total_breast = round(sum(manual))
-        data["total_breast_amount_ml"] = total_breast
+                    amount = delta
+            if amount is None and isinstance(e.get("amount_ml"), (int, float)):
+                amount = e["amount_ml"]
+            if amount is not None:
+                breast_total += amount
+                has_breast_amount = True
+        data["total_breast_amount_ml"] = round(breast_total) if has_breast_amount else None
 
         formula_amounts = [
             e["amount_ml"]
@@ -138,5 +153,5 @@ class FeedingChoreType(ChoreType):
         summary = " + ".join(parts) if parts else "Feeding"
         n = len(entries)
         if n > 1:
-            summary += f" ({n} checkpoints)"
+            summary += f" ×{n}"
         return summary

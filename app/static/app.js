@@ -158,13 +158,19 @@ async function loadDashboard() {
     card.className = "card";
     const ct = choreType(s.chore_type);
 
-    // "last event" chip - the headline info on the card, right above the action button
+    // "last event" chip - the headline info on the card, right above the action button.
+    // The pencil is a fast path to fix up/fill in the previous entry (e.g. add
+    // the amount to a pumping session logged when it started) without going
+    // through History.
     let lastHtml = '<div class="last-chip empty">No events yet</div>';
     if (s.last_event) {
       const openBadge = s.open_event_id ? '<span class="live-pill">live</span>' : "";
       lastHtml = `<div class="last-chip">
-          <div class="last-summary">${s.last_event.summary}${openBadge}</div>
-          <div class="last-time">${fmtRelative(s.last_event.timestamp)}</div>
+          <div class="last-chip-text">
+            <div class="last-summary">${s.last_event.summary}${openBadge}</div>
+            <div class="last-time">${fmtRelative(s.last_event.timestamp)}</div>
+          </div>
+          <button type="button" class="edit-last-btn" data-action="edit-last" title="Edit last entry">✏️</button>
         </div>`;
     }
 
@@ -245,13 +251,15 @@ async function loadDashboard() {
       ${todayHtml}
       ${buttonsHtml}
     `;
-    const defaultBtn = card.querySelector("[data-action]:not(.alarm-btn)");
+    const defaultBtn = card.querySelector("[data-action]:not(.alarm-btn):not(.edit-last-btn)");
     const defaultAction = defaultBtn ? defaultBtn.dataset.action : "new";
     card.querySelectorAll("[data-action]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         if (btn.dataset.action === "alarm") {
           downloadAlarmICS(s.label, s.next_due);
+        } else if (btn.dataset.action === "edit-last") {
+          editLastEntry(s.chore_type, s.last_event.id);
         } else {
           handleCardAction(s.chore_type, btn.dataset.action, targetEventId);
         }
@@ -276,6 +284,11 @@ async function handleCardAction(choreTypeKey, action, targetEventId) {
   } else {
     openForm(choreTypeKey, "create");
   }
+}
+
+async function editLastEntry(choreTypeKey, eventId) {
+  const event = await api(`/api/events/${eventId}`);
+  openForm(choreTypeKey, "edit", event);
 }
 
 async function logQuickAction(choreTypeKey, qa) {

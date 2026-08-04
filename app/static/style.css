@@ -205,14 +205,31 @@ main { max-width: 720px; margin: 0 auto; padding: 1.1rem 1rem; }
 .last-chip {
   background: var(--bg);
   border-radius: 10px;
-  padding: 0.5rem 0.6rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.6rem;
   display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.3rem;
 }
 .last-chip.empty { color: var(--muted); font-size: 0.85rem; }
-.last-chip .last-summary { font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.last-chip-text { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.last-chip .last-summary { font-weight: 600; font-size: 0.9rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; overflow-wrap: break-word; }
 .last-chip .last-time { color: var(--muted); font-size: 0.78rem; }
+.edit-last-btn {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0.3rem;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  touch-action: manipulation;
+  opacity: 0.6;
+}
+.edit-last-btn:active { background: var(--surface); opacity: 1; }
 
 .live-pill {
   background: var(--danger);
