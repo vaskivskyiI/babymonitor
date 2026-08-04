@@ -11,7 +11,7 @@ from app.chore_types.base import REGISTRY, ChoreType, FieldDef, FieldOption
 from app.custom_types import DynamicChoreType
 from app.db import get_db
 from app.feeding_guidance import feeding_guidance
-from app.models import ChoreTypeMeta, CustomChoreType, Event, Setting, as_utc
+from app.models import ChoreTypeMeta, CustomChoreType, Event, QuickActionDef, Setting, as_utc
 from app.reference_ranges import reference_range
 from app.schemas import (
     ChoreTypeMetaUpdate,
@@ -22,6 +22,8 @@ from app.schemas import (
     EventUpdate,
     ProfileOut,
     ProfileUpdate,
+    QuickActionCreate,
+    QuickActionUpdate,
     ReorderRequest,
     SettingsUpdate,
     StatusOut,
@@ -212,17 +214,74 @@ def calculator_feeding(
     return result
 
 
+def _quick_action_dict(row: QuickActionDef) -> dict:
+    return {
+        "id": row.id,
+        "label": row.label,
+        "mode": row.mode,
+        "entries_field": row.entries_field,
+        "match_field": row.match_field,
+        "match_value": row.match_value,
+        "target_field": row.target_field,
+        "value": row.value,
+    }
+
+
+def _configured_quick_actions(db: Session, key: str) -> list[dict]:
+    stmt = (
+        select(QuickActionDef)
+        .where(QuickActionDef.chore_type_key == key)
+        .order_by(QuickActionDef.sort_order, QuickActionDef.id)
+    )
+    return [_quick_action_dict(r) for r in db.execute(stmt).scalars().all()]
+
+
 @router.get("/chore-types")
 def list_chore_types(include_disabled: bool = False, db: Session = Depends(get_db)):
     metas = _all_chore_type_metas(db)
-    return [
-        {
-            **ct.as_dict(_interval_minutes(db, ct), _session_window_minutes(db, ct)),
-            "is_builtin": ct.key in REGISTRY,
-            "enabled": metas[ct.key].enabled if ct.key in metas else True,
-        }
-        for ct in _effective_chore_types(db, enabled_only=not include_disabled)
-    ]
+    result = []
+    for ct in _effective_chore_types(db, enabled_only=not include_disabled):
+        d = ct.as_dict(_interval_minutes(db, ct), _session_window_minutes(db, ct))
+        d["quick_actions"] = list(d.get("quick_actions") or []) + _configured_quick_actions(db, ct.key)
+        d["is_builtin"] = ct.key in REGISTRY
+        d["enabled"] = metas[ct.key].enabled if ct.key in metas else True
+        result.append(d)
+    return result
+
+
+@router.post("/chore-types/{key}/quick-actions")
+def create_quick_action(key: str, body: QuickActionCreate, db: Session = Depends(get_db)):
+    _get_chore_type(key, db)  # 404s if unknown
+    max_order = db.execute(
+        select(QuickActionDef).where(QuickActionDef.chore_type_key == key)
+    ).scalars().all()
+    next_order = (max((r.sort_order for r in max_order), default=-1)) + 1
+    row = QuickActionDef(chore_type_key=key, sort_order=next_order, **body.model_dump())
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _quick_action_dict(row)
+
+
+@router.put("/chore-types/{key}/quick-actions/{action_id}")
+def update_quick_action(key: str, action_id: int, body: QuickActionUpdate, db: Session = Depends(get_db)):
+    row = db.get(QuickActionDef, action_id)
+    if row is None or row.chore_type_key != key:
+        raise HTTPException(404, "Quick action not found")
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(row, field, value)
+    db.commit()
+    return _quick_action_dict(row)
+
+
+@router.delete("/chore-types/{key}/quick-actions/{action_id}")
+def delete_quick_action(key: str, action_id: int, db: Session = Depends(get_db)):
+    row = db.get(QuickActionDef, action_id)
+    if row is None or row.chore_type_key != key:
+        raise HTTPException(404, "Quick action not found")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/chore-types")
@@ -308,6 +367,8 @@ def delete_custom_chore_type(key: str, db: Session = Depends(get_db)):
     meta = db.get(ChoreTypeMeta, key)
     if meta:
         db.delete(meta)
+    for qa in db.execute(select(QuickActionDef).where(QuickActionDef.chore_type_key == key)).scalars().all():
+        db.delete(qa)
     db.commit()
     return {"ok": True, "deleted_events": len(deleted_events)}
 

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -68,3 +68,24 @@ class CustomChoreType(Base):
     fields_json: Mapped[list] = mapped_column(JSON, default=list)
     interval_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class QuickActionDef(Base):
+    """A user-configured dashboard quick-action button for an `entries`-type
+    field, e.g. "Formula +10ml" (increment) or "Formula 100ml" (absolute).
+    Applied to the last matching entry of the chore type's open/last event,
+    or starts a new one-entry event if none is open - see
+    app/static/app.js's runFieldQuickAction()."""
+
+    __tablename__ = "quick_action_defs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    chore_type_key: Mapped[str] = mapped_column(String(64), index=True)
+    label: Mapped[str] = mapped_column(String(64))
+    mode: Mapped[str] = mapped_column(String(16))  # "increment" | "absolute"
+    entries_field: Mapped[str] = mapped_column(String(64), default="entries")
+    match_field: Mapped[str] = mapped_column(String(64))
+    match_value: Mapped[str] = mapped_column(String(64))
+    target_field: Mapped[str] = mapped_column(String(64))
+    value: Mapped[float] = mapped_column(Float)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)

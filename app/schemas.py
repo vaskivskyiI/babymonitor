@@ -95,3 +95,22 @@ class ChoreTypeMetaUpdate(BaseModel):
 
 class ReorderRequest(BaseModel):
     keys: list[str]
+
+
+class QuickActionCreate(BaseModel):
+    label: str
+    mode: str  # "increment" | "absolute"
+    entries_field: str = "entries"
+    match_field: str
+    match_value: str
+    target_field: str
+    value: float
+
+
+class QuickActionUpdate(BaseModel):
+    label: Optional[str] = None
+    mode: Optional[str] = None
+    match_field: Optional[str] = None
+    match_value: Optional[str] = None
+    target_field: Optional[str] = None
+    value: Optional[float] = None

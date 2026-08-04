@@ -215,22 +215,27 @@ async function loadDashboard() {
       } else {
         buttonsHtml = `<button class="quick-btn" data-action="start">${ct.icon} Start ${ct.label}</button>`;
       }
+    } else if (ct && ct.quick_actions && ct.quick_actions.length) {
+      // one-tap presets - logged/updated instantly, no form. Field-targeting
+      // ones (increment/absolute) apply to the open session if there is one,
+      // so they stay available (and useful!) alongside "+ Add checkpoint"
+      // rather than being replaced by it.
+      targetEventId = s.active_session_event_id || null;
+      const moreAction = s.active_session_event_id ? "checkpoint" : "new";
+      buttonsHtml = `
+        <div class="quick-actions-row">
+          ${ct.quick_actions
+            .map((qa, i) => `<button class="quick-btn pill" data-quick="${i}">${qa.label}</button>`)
+            .join("")}
+          <button class="icon-btn more-btn" data-action="${moreAction}" title="More options">+</button>
+        </div>
+        ${s.active_session_event_id ? '<button type="button" class="quick-btn secondary-btn" data-action="new">+ New session</button>' : ""}`;
     } else if (s.active_session_event_id) {
       targetEventId = s.active_session_event_id;
       buttonsHtml = `
         <div class="row">
           <button class="quick-btn" data-action="checkpoint">+ Add checkpoint</button>
           <button class="quick-btn secondary-btn" data-action="new">+ New</button>
-        </div>`;
-    } else if (ct && ct.quick_actions && ct.quick_actions.length) {
-      // one-tap presets - logged instantly, no form. A small "+" opens the
-      // full form for anything that needs a note/backdated time.
-      buttonsHtml = `
-        <div class="quick-actions-row">
-          ${ct.quick_actions
-            .map((qa, i) => `<button class="quick-btn pill" data-quick="${i}">${qa.label}</button>`)
-            .join("")}
-          <button class="icon-btn more-btn" data-action="new" title="More options">+</button>
         </div>`;
     } else {
       buttonsHtml = `<button class="quick-btn" data-action="new">+ Log now</button>`;
@@ -251,8 +256,6 @@ async function loadDashboard() {
       ${todayHtml}
       ${buttonsHtml}
     `;
-    const defaultBtn = card.querySelector("[data-action]:not(.alarm-btn):not(.edit-last-btn)");
-    const defaultAction = defaultBtn ? defaultBtn.dataset.action : "new";
     card.querySelectorAll("[data-action]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -269,10 +272,23 @@ async function loadDashboard() {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         const qa = ct.quick_actions[Number(btn.dataset.quick)];
-        logQuickAction(s.chore_type, qa);
+        if (qa.mode === "increment" || qa.mode === "absolute") {
+          runFieldQuickAction(s.chore_type, qa, s);
+        } else {
+          logQuickAction(s.chore_type, qa);
+        }
       });
     });
-    card.addEventListener("click", () => handleCardAction(s.chore_type, defaultAction, targetEventId));
+    // Clicking the previous-entry display edits it (same as the pencil) -
+    // creating a new entry only happens via the explicit action buttons above.
+    if (s.last_event) {
+      const chipEl = card.querySelector(".last-chip");
+      chipEl.classList.add("clickable");
+      chipEl.addEventListener("click", (e) => {
+        e.stopPropagation();
+        editLastEntry(s.chore_type, s.last_event.id);
+      });
+    }
     container.appendChild(card);
   });
 }
@@ -298,6 +314,42 @@ async function logQuickAction(choreTypeKey, qa) {
       body: JSON.stringify({ chore_type: choreTypeKey, data: qa.data }),
     });
     toast(qa.label + " logged");
+    refreshCurrentView();
+  } catch (err) {
+    toast("Error: " + err.message);
+  }
+}
+
+// Configurable quick action targeting an `entries` field, e.g. "Formula
+// +10ml" (mode: increment) or "Formula 100ml" (mode: absolute). Applies to
+// the last entry matching match_field/match_value within the currently
+// open session (if any), or starts a new one-entry event otherwise - so
+// repeated taps build up the same checkpoint instead of creating one each.
+async function runFieldQuickAction(choreTypeKey, qa, status) {
+  try {
+    const sessionEventId = status.active_session_event_id || status.open_event_id;
+    const event = sessionEventId ? await api(`/api/events/${sessionEventId}`) : null;
+    const entries = event ? [...(event.data[qa.entries_field] || [])] : [];
+    let idx = -1;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i][qa.match_field] === qa.match_value) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx >= 0) {
+      const cur = Number(entries[idx][qa.target_field]) || 0;
+      entries[idx] = { ...entries[idx], [qa.target_field]: qa.mode === "increment" ? cur + qa.value : qa.value };
+    } else {
+      entries.push({ timestamp: new Date().toISOString(), [qa.match_field]: qa.match_value, [qa.target_field]: qa.value });
+    }
+    const data = { [qa.entries_field]: entries };
+    if (event) {
+      await api(`/api/events/${event.id}`, { method: "PUT", body: JSON.stringify({ data }) });
+    } else {
+      await api("/api/events", { method: "POST", body: JSON.stringify({ chore_type: choreTypeKey, data }) });
+    }
+    toast(qa.label);
     refreshCurrentView();
   } catch (err) {
     toast("Error: " + err.message);
@@ -1174,13 +1226,16 @@ function openChoreTypeBuilder(existing) {
   if (isBuiltinEdit) {
     // built-ins only allow renaming/re-iconing from here; their fields and
     // behavior are code-defined
+    const entriesField = existing.fields.find((f) => f.type === "entries");
     form.innerHTML = `
       <div class="field"><label>Label</label><input type="text" id="ct-label" value="${existing.label}" required></div>
       <div class="field"><label>Icon (emoji)</label><input type="text" id="ct-icon" value="${existing.icon}" required></div>
+      ${entriesField ? `<div class="field"><label>Quick actions</label><div id="qa-section"></div></div>` : ""}
       <div class="form-actions">
         <button type="button" id="ct-cancel-btn" class="btn secondary">Cancel</button>
         <button type="submit" class="btn">Save</button>
       </div>`;
+    if (entriesField) renderQuickActionsSection(existing, entriesField);
     form.onsubmit = async (e) => {
       e.preventDefault();
       await api(`/api/chore-types/${existing.key}/meta`, {
@@ -1284,6 +1339,99 @@ function openChoreTypeBuilder(existing) {
 
 function closeChoreTypeModal() {
   document.getElementById("ct-modal-backdrop").classList.add("hidden");
+}
+
+// Manage configured (DB-backed) quick actions for an entries-based chore
+// type, e.g. "Formula +10ml" - increments/sets a field on the last
+// matching entry of the open session, or starts one. Lives inside the
+// chore-type edit modal, saves immediately per-action (not tied to the
+// modal's own Save button).
+async function renderQuickActionsSection(ct, entriesField) {
+  const box = document.getElementById("qa-section");
+  if (!box) return;
+  const matchField = entriesField.entry_fields.find((f) => f.type === "select");
+  const numericFields = entriesField.entry_fields.filter((f) => f.type === "number");
+  const configured = (ct.quick_actions || []).filter((qa) => qa.id != null);
+
+  const listHtml = configured.length
+    ? configured
+        .map(
+          (qa) => `<div class="qa-row" data-id="${qa.id}">
+            <span class="qa-label">${qa.label}</span>
+            <button type="button" class="icon-btn qa-delete-btn" data-id="${qa.id}">🗑️</button>
+          </div>`
+        )
+        .join("")
+    : '<p class="muted-note">No quick actions yet.</p>';
+
+  box.innerHTML = `
+    <div class="qa-list">${listHtml}</div>
+    ${
+      matchField && numericFields.length
+        ? `<button type="button" class="btn secondary" id="qa-add-toggle-btn">+ Add quick action</button>
+           <div id="qa-add-form" class="qa-add-form hidden">
+             <input type="text" id="qa-new-label" placeholder="Label, e.g. Formula +10ml">
+             <select id="qa-new-match">
+               ${matchField.options.map((o) => `<option value="${o.value}">${o.label}</option>`).join("")}
+             </select>
+             <select id="qa-new-target">
+               ${numericFields.map((f) => `<option value="${f.name}">${f.label}${f.unit ? ` (${f.unit})` : ""}</option>`).join("")}
+             </select>
+             <select id="qa-new-mode">
+               <option value="increment">Increment by</option>
+               <option value="absolute">Set to</option>
+             </select>
+             <input type="number" id="qa-new-value" placeholder="Value" step="any">
+             <button type="button" class="btn" id="qa-new-save-btn">Add</button>
+           </div>`
+        : ""
+    }
+  `;
+
+  box.querySelectorAll(".qa-delete-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await api(`/api/chore-types/${ct.key}/quick-actions/${btn.dataset.id}`, { method: "DELETE" });
+      await loadChoreTypes();
+      const refreshed = choreType(ct.key);
+      renderQuickActionsSection(refreshed, entriesField);
+      loadDashboard();
+    });
+  });
+
+  const toggleBtn = document.getElementById("qa-add-toggle-btn");
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", () => {
+      document.getElementById("qa-add-form").classList.toggle("hidden");
+    });
+    document.getElementById("qa-new-save-btn").addEventListener("click", async () => {
+      const label = document.getElementById("qa-new-label").value.trim();
+      const value = document.getElementById("qa-new-value").value;
+      if (!label || value === "") {
+        toast("Label and value are required");
+        return;
+      }
+      try {
+        await api(`/api/chore-types/${ct.key}/quick-actions`, {
+          method: "POST",
+          body: JSON.stringify({
+            label,
+            mode: document.getElementById("qa-new-mode").value,
+            match_field: matchField.name,
+            match_value: document.getElementById("qa-new-match").value,
+            target_field: document.getElementById("qa-new-target").value,
+            value: Number(value),
+          }),
+        });
+        toast("Quick action added");
+        await loadChoreTypes();
+        const refreshed = choreType(ct.key);
+        renderQuickActionsSection(refreshed, entriesField);
+        loadDashboard();
+      } catch (err) {
+        toast("Error: " + err.message);
+      }
+    });
+  }
 }
 
 document.getElementById("add-chore-type-btn").addEventListener("click", () => openChoreTypeBuilder(null));

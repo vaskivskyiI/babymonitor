@@ -42,10 +42,18 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   instantly from the dashboard with a single tap - no form, no typing.
   Number fields elsewhere (weight, amounts) use large +/- steppers sized
   per field, so most logging never needs the keyboard at all.
+- **Configurable quick actions** for feeding/pumping-style (checkpoint-
+  based) chore types: from a type's Edit screen in Settings, add buttons
+  like "Formula +10ml" (increments the matching checkpoint's amount each
+  tap) or "Formula 100ml" (sets it outright). They apply to the
+  currently-open session if there is one - repeated taps build up the
+  same checkpoint - or start a new one otherwise.
 - **Fast edit of the previous entry**: every dashboard card's last-event
-  line has a ✏️ that jumps straight to editing that entry - e.g. log
-  "started pumping" with just a side selected, then tap ✏️ later to fill
-  in the amount, no need to go through History.
+  line - tap it (or its ✏️) to jump straight to editing that entry, e.g.
+  log "started pumping" with just a side selected, then tap it later to
+  fill in the amount, no need to go through History. New entries are
+  only created via the explicit action buttons, never by tapping the
+  card itself.
 - **Set an alarm for the next feed** (or any reminder): tap the 🔔 next
   to a "Next due" time to download a calendar event with an alarm at
   that moment - works on any phone via its own Calendar app, no push
@@ -293,6 +301,7 @@ done in the app's Settings tab.
 - `PUT /api/chore-types/{key}/meta` - rename/re-icon/enable/disable any chore type (built-in or custom)
 - `POST /api/chore-types/reorder` - `{keys: [...]}` in the desired display order
 - `DELETE /api/chore-types/{key}` - delete a custom chore type and its events (built-ins can only be disabled)
+- `POST /api/chore-types/{key}/quick-actions` / `PUT .../{action_id}` / `DELETE .../{action_id}` - manage configurable quick actions (`{label, mode: "increment"|"absolute", match_field, match_value, target_field, value}`) for entries-based chore types
 - `PUT /api/chore-types/{key}/settings` - set reminder interval / session window (minutes)
 - `GET /api/profile` / `PUT /api/profile` (partial updates supported) - baby's name, birth date, birth weight, timezone (auto-synced from the browser; drives age display and day-bucketing)
 - `POST /api/events` - log an event `{chore_type, timestamp?, data, notes?}`
