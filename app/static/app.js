@@ -343,7 +343,9 @@ async function runFieldQuickAction(choreTypeKey, qa, status) {
     } else {
       entries.push({ timestamp: new Date().toISOString(), [qa.match_field]: qa.match_value, [qa.target_field]: qa.value });
     }
-    const data = { [qa.entries_field]: entries };
+    // PUT replaces the whole `data` object, so merge onto the event's
+    // existing data (e.g. a typed note) instead of dropping everything else.
+    const data = { ...(event ? event.data : {}), [qa.entries_field]: entries };
     if (event) {
       await api(`/api/events/${event.id}`, { method: "PUT", body: JSON.stringify({ data }) });
     } else {

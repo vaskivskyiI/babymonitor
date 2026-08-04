@@ -74,6 +74,12 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
 - **Installable as an app (PWA)**: add it to your phone's home screen
   (Safari: Share → Add to Home Screen; Chrome: menu → Install app) for a
   full-screen, app-like experience with an icon - no app store needed.
+- **Home Assistant custom integration**, installable via HACS as a
+  custom repository: sensors for every chore type's status/today totals,
+  buttons for every quick action, and services to log/edit/delete events
+  or run a quick action from an automation. See
+  [Home Assistant custom integration](#home-assistant-custom-integration-hacs)
+  below.
 - **Baby profile**: set a birth date (+ name) in Settings. Once set, the
   dashboard shows the baby's age and stats charts are labeled with
   age-in-days alongside the date. Timezone is detected automatically
@@ -129,12 +135,68 @@ Then open `http://<server-ip>:8000` on your phone or laptop.
 Data is stored in a single SQLite file at `/data/babymonitor.db`, which is
 persisted via the `./data` bind mount - back that folder up.
 
-## Home Assistant integration
+## Home Assistant custom integration (HACS)
 
-The API is plain JSON, so Home Assistant can both read every chore
-type's status/history (and keep its own long-term statistics on it) and
-trigger any of them - diaper, feeding, weight, sleep, pumping, and any
-chore type you add later.
+The recommended way to use Baby Monitor from Home Assistant is the
+custom integration in [`custom_components/babymonitor`](custom_components/babymonitor),
+installable and updatable through [HACS](https://hacs.xyz) as a custom
+repository. It talks to your server's existing REST API - no changes on
+the server side - and gives you:
+
+- **Sensors** (visualize): a "last event" sensor per chore type (state =
+  human summary like "🍼 Formula 90ml", full event JSON in attributes), a
+  "next due" timestamp sensor, one sensor per numeric field's running
+  total for today (with `state_class: measurement`, so HA keeps long-term
+  statistics automatically), and a baby-age sensor.
+- **Buttons** (control): one button per configured quick action (exactly
+  the ones on the app's dashboard - "💧 Wet", "Formula +10ml", etc.), plus
+  Start/End buttons for session-based types like sleep. Drop them on a
+  dashboard or trigger them from automations (an NFC tag by the changing
+  table, a physical button, a voice command).
+- **Services** (add/change entries generically): `babymonitor.log_event`,
+  `babymonitor.update_event`, `babymonitor.delete_event`,
+  `babymonitor.quick_action`, and `babymonitor.refresh` - for anything
+  the fixed buttons don't cover, e.g. logging a weight reading with a
+  value from a Bluetooth scale, from an automation.
+
+### Install via HACS
+
+1. HACS → the "⋮" menu (top right) → **Custom repositories**.
+2. Repository: `https://github.com/vaskivskyiI/babymonitor`, category:
+   **Integration**. Add.
+3. Find **Baby Monitor** in HACS → Integrations, install it, restart Home
+   Assistant.
+4. Settings → Devices & Services → **Add Integration** → search "Baby
+   Monitor" → enter your server's URL (e.g. `http://192.168.1.50:8000`).
+
+HACS will offer updates here the same way it does for any other custom
+integration, whenever a new release is tagged on the repository.
+
+### Example: NFC tag / dashboard button that logs a wet diaper
+
+Every quick action becomes a `button` entity automatically - e.g.
+`button.baby_monitor_diaper_wet` - so this needs no YAML at all: assign
+the entity directly to a dashboard tile or an NFC tag automation's
+action. For anything a quick action doesn't cover, call a service
+instead:
+
+```yaml
+service: babymonitor.log_event
+data:
+  chore_type: weight
+  data:
+    weight_g: "{{ states('sensor.baby_scale') | float }}"
+```
+
+See [`custom_components/babymonitor/services.yaml`](custom_components/babymonitor/services.yaml)
+for the full service reference (also visible in Home Assistant's
+Developer Tools → Actions, with autocomplete).
+
+### Prefer no custom component? Raw REST also works
+
+Everything below (`rest:` sensors and `rest_command:`) works with
+stock Home Assistant and no HACS install, if you'd rather not add a
+custom integration.
 
 ### Reading status + history into HA (`rest` sensors)
 

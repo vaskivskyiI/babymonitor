@@ -1,0 +1,12 @@
+{
+  "domain": "babymonitor",
+  "name": "Baby Monitor",
+  "codeowners": ["@vaskivskyiI"],
+  "config_flow": true,
+  "documentation": "https://github.com/vaskivskyiI/babymonitor",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/vaskivskyiI/babymonitor/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

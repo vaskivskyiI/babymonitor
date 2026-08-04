@@ -107,7 +107,7 @@ main { max-width: 720px; margin: 0 auto; padding: 1.1rem 1rem; }
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 0.7rem;
 }
 

@@ -1,0 +1,133 @@
+log_event:
+  name: Log event
+  description: >-
+    Log a new Baby Monitor event, e.g. a diaper change, a feeding checkpoint,
+    a weight reading. `data` shape depends on the chore type - see
+    GET /api/chore-types on your server, or the app itself, for each type's
+    fields.
+  fields:
+    config_entry_id:
+      name: Server
+      description: Which Baby Monitor server (only needed if you have more than one configured).
+      required: false
+      selector:
+        config_entry:
+          integration: babymonitor
+    chore_type:
+      name: Chore type
+      description: "e.g. diaper, feeding, weight, height, sleep, pumping, probiotic, or a custom type's key."
+      required: true
+      example: diaper
+      selector:
+        text:
+    data:
+      name: Data
+      description: The event's field values as an object, matching that chore type's fields.
+      required: false
+      example: '{"pee": true, "poop": false}'
+      selector:
+        object:
+    timestamp:
+      name: Timestamp
+      description: ISO 8601 timestamp. Defaults to now.
+      required: false
+      selector:
+        datetime:
+    notes:
+      name: Notes
+      description: Free-text note for this event.
+      required: false
+      selector:
+        text:
+
+update_event:
+  name: Update event
+  description: >-
+    Edit an existing event. `data` replaces the event's whole data object,
+    so include everything you want to keep (e.g. fetch it first with a
+    template, or use quick_action for simple increments).
+  fields:
+    config_entry_id:
+      name: Server
+      required: false
+      selector:
+        config_entry:
+          integration: babymonitor
+    event_id:
+      name: Event ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    data:
+      name: Data
+      required: false
+      selector:
+        object:
+    timestamp:
+      name: Timestamp
+      required: false
+      selector:
+        datetime:
+    notes:
+      name: Notes
+      required: false
+      selector:
+        text:
+
+delete_event:
+  name: Delete event
+  description: Permanently delete an event.
+  fields:
+    config_entry_id:
+      name: Server
+      required: false
+      selector:
+        config_entry:
+          integration: babymonitor
+    event_id:
+      name: Event ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+
+quick_action:
+  name: Run quick action
+  description: >-
+    Run a quick action by its label, exactly as tapping its button would -
+    an "increment"/"absolute" action applies to the currently open session
+    if there is one. See each chore type's quick actions in the app's
+    Settings, or the matching button entities.
+  fields:
+    config_entry_id:
+      name: Server
+      required: false
+      selector:
+        config_entry:
+          integration: babymonitor
+    chore_type:
+      name: Chore type
+      required: true
+      example: feeding
+      selector:
+        text:
+    label:
+      name: Quick action label
+      description: Must match the label exactly, e.g. "Formula +10ml".
+      required: true
+      selector:
+        text:
+
+refresh:
+  name: Refresh
+  description: Force an immediate poll of the Baby Monitor server instead of waiting for the next scheduled update.
+  fields:
+    config_entry_id:
+      name: Server
+      required: false
+      selector:
+        config_entry:
+          integration: babymonitor
