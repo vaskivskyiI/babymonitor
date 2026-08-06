@@ -145,6 +145,13 @@ class ChoreType:
         session is still open. Defaults to the event's own timestamp."""
         return fallback
 
+    def event_timestamp(self, data: dict, fallback: datetime) -> datetime:
+        """The event's own displayed/stored timestamp. Defaults to whatever
+        was submitted (or now). Entries-based types override this to use
+        the *earliest* checkpoint's timestamp, so there's a single source
+        of truth instead of two independently-editable times."""
+        return fallback
+
     def stats_extra(self, events: list, tz, profile: dict) -> dict:
         """Hook for extra derived series in GET /api/stats/{key}, beyond the
         per-day numeric_stat aggregation (e.g. weight-gain rate, trend

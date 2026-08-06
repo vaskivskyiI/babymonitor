@@ -61,6 +61,12 @@ class PumpingChoreType(ChoreType):
         data["total_amount_ml"] = round(sum(amounts)) if amounts else None
         return data
 
+    def event_timestamp(self, data: dict, fallback: datetime) -> datetime:
+        # the session's own time is the *first* sub-step's time, not a
+        # separately-set value - one source of truth instead of two clocks
+        timestamps = [t for e in (data.get("entries") or []) if (t := _parse_ts(e.get("timestamp")))]
+        return min(timestamps) if timestamps else fallback
+
     def summarize(self, data: dict) -> str:
         total = data.get("total_amount_ml")
         entries = data.get("entries") or []

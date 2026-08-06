@@ -19,10 +19,14 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   or skip weighing entirely and type the amount directly, e.g. a bottle
   of previously pumped milk. Each sub-step contributes its own amount
   (weighed or typed) to the total, so a session can freely mix both.
-  Formula amount is summed separately. The dashboard offers "+ Add
-  checkpoint" instead of "+ Log now" while a feeding is still open
-  (within a configurable session window, default 45 min since the last
-  checkpoint), and "+ New" to start a separate feeding anyway.
+  Formula amount is summed separately. The session's own time is always
+  the *first* checkpoint's time - there's one clock, not a separate
+  "event time" and "first checkpoint time" to keep in sync. The
+  dashboard offers quick actions and "+ New" while a feeding is still
+  open (within a configurable session window, default 45 min since the
+  last checkpoint) to start a separate feeding anyway; adding a fuller
+  checkpoint to the open session happens by editing it (tap the previous
+  entry, or ✏️).
 - **Sleep**: tap "Start Sleep" / "End Sleep" - duration is calculated
   automatically from the two timestamps, no manual entry, and displayed
   as "2h 15m" rather than raw minutes once it's over 90 min.
@@ -92,8 +96,9 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   [Reference ranges used](#reference-ranges-used) below.
 - Every event's timestamp defaults to "now" but is fully editable.
 - Dashboard shows time since last event, time until the next one is due
-  (per chore type, based on a configurable interval), and today's totals
-  (e.g. wet/poopy diaper counts, ml fed, latest weight).
+  alongside the actual clock time it's due at (e.g. "Next 2h 15m
+  (14:30)") - per chore type, based on a configurable interval - and
+  today's totals (e.g. wet/poopy diaper counts, ml fed, latest weight).
 - History view to browse/edit/delete past events, always sorted
   chronologically by event time regardless of the order they were
   entered in (so backdating one doesn't leave it out of place).

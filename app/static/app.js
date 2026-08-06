@@ -43,6 +43,13 @@ function fmtFieldValue(field, value) {
   return `${value}${field.unit || ""}`;
 }
 
+// Absolute clock time (e.g. "14:05"), shown alongside relative due text so
+// it's clear exactly when "next"/"overdue" actually is, not just how long.
+function fmtClockTime(dateOrIso) {
+  const d = dateOrIso instanceof Date ? dateOrIso : new Date(dateOrIso);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 function fmtRelative(dateIso, futureLabel = "in") {
   const now = new Date();
   const d = new Date(dateIso);
@@ -188,12 +195,12 @@ async function loadDashboard() {
         const reference = s.last_event ? new Date(new Date(s.last_event.timestamp).getTime() + 24 * 3600 * 1000) : null;
         dueText =
           reference && reference <= new Date()
-            ? `Overdue by ${fmtRelative(reference.toISOString()).replace(" ago", "")}`
+            ? `Overdue by ${fmtRelative(reference.toISOString()).replace(" ago", "")} (${fmtClockTime(reference)})`
             : "Due today";
       }
     } else if (s.next_due) {
       dueClass = s.overdue ? "overdue" : "ok";
-      dueText = `${s.overdue ? "Overdue by" : "Next"} ${fmtRelative(s.next_due).replace("ago", "").replace("in ", "")}`;
+      dueText = `${s.overdue ? "Overdue by" : "Next"} ${fmtRelative(s.next_due).replace("ago", "").replace("in ", "")} (${fmtClockTime(s.next_due)})`;
     }
     // "Set alarm" - only for a real future due time (a plain interval-based
     // reminder, not the daily-reset kind, and not already overdue - there's
@@ -217,26 +224,22 @@ async function loadDashboard() {
       }
     } else if (ct && ct.quick_actions && ct.quick_actions.length) {
       // one-tap presets - logged/updated instantly, no form. Field-targeting
-      // ones (increment/absolute) apply to the open session if there is one,
-      // so they stay available (and useful!) alongside "+ Add checkpoint"
-      // rather than being replaced by it.
+      // ones (increment/absolute) apply to the open session if there is one.
+      // Adding a fuller checkpoint (e.g. a weighed entry) to an open session
+      // happens via editing it (pencil / tap the previous entry), which has
+      // its own "+ Add checkpoint" inside the entries builder - no separate
+      // dashboard-level action needed.
       targetEventId = s.active_session_event_id || null;
-      const moreAction = s.active_session_event_id ? "checkpoint" : "new";
       buttonsHtml = `
         <div class="quick-actions-row">
           ${ct.quick_actions
             .map((qa, i) => `<button class="quick-btn pill" data-quick="${i}">${qa.label}</button>`)
             .join("")}
-          <button class="icon-btn more-btn" data-action="${moreAction}" title="More options">+</button>
-        </div>
-        ${s.active_session_event_id ? '<button type="button" class="quick-btn secondary-btn" data-action="new">+ New session</button>' : ""}`;
+          <button class="icon-btn more-btn" data-action="new" title="Start a new one">+</button>
+        </div>`;
     } else if (s.active_session_event_id) {
       targetEventId = s.active_session_event_id;
-      buttonsHtml = `
-        <div class="row">
-          <button class="quick-btn" data-action="checkpoint">+ Add checkpoint</button>
-          <button class="quick-btn secondary-btn" data-action="new">+ New</button>
-        </div>`;
+      buttonsHtml = `<button class="quick-btn secondary-btn" data-action="new">+ New</button>`;
     } else {
       buttonsHtml = `<button class="quick-btn" data-action="new">+ Log now</button>`;
     }
@@ -535,7 +538,13 @@ function openForm(choreTypeKey, mode, event) {
     });
   }
 
-  let html = `<div class="field">
+  // Entries-based types (feeding, pumping, ...) derive their own time from
+  // the first checkpoint - showing a separate top-level "Time" here would
+  // just be a second, independently-editable clock for the same moment.
+  const hasEntries = editableFields.some((f) => f.type === "entries");
+  let html = hasEntries
+    ? ""
+    : `<div class="field">
       <label for="f_timestamp">Time</label>
       <input type="datetime-local" id="f_timestamp" name="timestamp" required>
     </div>`;
@@ -547,7 +556,8 @@ function openForm(choreTypeKey, mode, event) {
     </div>`;
   form.innerHTML = html;
 
-  form.querySelector("#f_timestamp").value = toLocalInputValue(event ? event.timestamp : new Date());
+  const timestampInput = form.querySelector("#f_timestamp");
+  if (timestampInput) timestampInput.value = toLocalInputValue(event ? event.timestamp : new Date());
 
   editableFields
     .filter((f) => f.type === "number_list")
@@ -615,7 +625,10 @@ async function submitForm(ct, form, existingEvent) {
       }
     });
 
-  const timestamp = fromLocalInputValue(form.querySelector("#f_timestamp").value);
+  // Absent for entries-based types - their timestamp is derived server-side
+  // from the first checkpoint (see ChoreType.event_timestamp).
+  const timestampField = form.querySelector("#f_timestamp");
+  const timestamp = timestampField ? fromLocalInputValue(timestampField.value) : undefined;
 
   try {
     if (existingEvent) {

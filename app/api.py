@@ -390,6 +390,7 @@ def create_event(body: EventCreate, db: Session = Depends(get_db)):
     ct = _get_chore_type(body.chore_type, db)
     timestamp = body.timestamp or _now()
     data = ct.compute_derived(dict(body.data), timestamp)
+    timestamp = ct.event_timestamp(data, timestamp)
     event = Event(
         chore_type=ct.key,
         timestamp=timestamp,
@@ -439,6 +440,7 @@ def update_event(event_id: int, body: EventUpdate, db: Session = Depends(get_db)
         event.timestamp = body.timestamp
     if body.data is not None:
         event.data = ct.compute_derived(dict(body.data), as_utc(event.timestamp))
+        event.timestamp = ct.event_timestamp(event.data, as_utc(event.timestamp))
     if body.notes is not None:
         event.notes = body.notes
     db.commit()

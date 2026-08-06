@@ -140,6 +140,12 @@ class FeedingChoreType(ChoreType):
         timestamps = [t for e in (data.get("entries") or []) if (t := _parse_ts(e.get("timestamp")))]
         return max(timestamps) if timestamps else fallback
 
+    def event_timestamp(self, data: dict, fallback: datetime) -> datetime:
+        # the feeding's own time is the *first* checkpoint's time, not a
+        # separately-set value - one source of truth instead of two clocks
+        timestamps = [t for e in (data.get("entries") or []) if (t := _parse_ts(e.get("timestamp")))]
+        return min(timestamps) if timestamps else fallback
+
     def summarize(self, data: dict) -> str:
         entries = data.get("entries") or []
         methods = {e.get("method") for e in entries}
