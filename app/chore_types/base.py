@@ -152,6 +152,17 @@ class ChoreType:
         of truth instead of two independently-editable times."""
         return fallback
 
+    def split_across_days(self, data: dict, start: datetime, tz) -> Optional[dict[str, dict[str, float]]]:
+        """For events with a real duration that can cross midnight (e.g.
+        sleep): return `{date_iso: {field_name: contribution}}` splitting
+        numeric_stat values proportionally by how much of the event
+        actually falls on each calendar day (in `tz`), instead of
+        attributing the whole value to the start day. Return None (default)
+        for the normal single-day attribution - which is correct for most
+        chore types: they're events, not spans, so they belong to the day
+        they were logged/started, full stop."""
+        return None
+
     def stats_extra(self, events: list, tz, profile: dict) -> dict:
         """Hook for extra derived series in GET /api/stats/{key}, beyond the
         per-day numeric_stat aggregation (e.g. weight-gain rate, trend

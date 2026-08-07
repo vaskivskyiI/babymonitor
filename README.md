@@ -29,7 +29,12 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   entry, or ✏️).
 - **Sleep**: tap "Start Sleep" / "End Sleep" - duration is calculated
   automatically from the two timestamps, no manual entry, and displayed
-  as "2h 15m" rather than raw minutes once it's over 90 min.
+  as "2h 15m" rather than raw minutes once it's over 90 min. A nap that
+  crosses midnight is split proportionally between both days in Stats
+  and in "today's" total (e.g. 22:30-01:15 counts 90 min on the first
+  day and 75 min on the second) - everything else (diaper, feeding,
+  ...) is simply attributed to the day it started, since those are
+  discrete events rather than spans.
 - **Weight** and **Height**: quick weigh-in / measurement log.
 - **Pumping**: also a checkpoint-based log, one sub-step per side/session
   (amount + duration each), so a left-then-right pump adds up correctly.
@@ -482,6 +487,16 @@ additive). Override `stats_extra(events, tz, profile)` for derived
 series that aren't a simple per-day aggregate - `weight` uses it to
 compute a weight-gain-rate series, a linear trend extrapolation, and an
 "ideal" age-based trajectory band.
+
+By default a numeric_stat value is attributed entirely to the day the
+event *started* - correct for discrete events (a diaper change, a
+feeding). For a chore type with a real duration that can cross midnight,
+override `split_across_days(data, start, tz)` to return
+`{date_iso: {field_name: contribution}}`, splitting the value
+proportionally by how much actually falls on each calendar day instead -
+`sleep` uses this so an overnight nap counts correctly on both days in
+Stats and in the dashboard's "today" totals, while the event itself
+(the "1 sleep" count) still belongs to the day it started.
 
 Override `next_due(last_timestamp, interval_minutes, tz)` for a reminder
 that isn't a simple rolling interval - `probiotic` uses it to reset at

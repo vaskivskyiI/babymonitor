@@ -504,14 +504,32 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
         open_event_id = last.id
 
     today_start, today_end = _today_bounds(tz)
+    today_key = today_start.astimezone(tz).date().isoformat()
+    # look back a few days too, so a chore type like sleep that started
+    # yesterday (or earlier) but spans into today via split_across_days
+    # still contributes its today-portion - everything else just gets
+    # filtered back out below since it didn't start today and isn't split.
+    lookback_start = today_start - timedelta(days=3)
     today_stmt = select(Event).where(
-        Event.chore_type == ct.key, Event.timestamp >= today_start, Event.timestamp < today_end
+        Event.chore_type == ct.key, Event.timestamp >= lookback_start, Event.timestamp < today_end
     )
-    today_events = db.execute(today_stmt).scalars().all()
+    candidate_events = db.execute(today_stmt).scalars().all()
     today: dict[str, float] = {}
     for f in ct.numeric_fields():
-        values = [e.data.get(f.name) for e in today_events]
-        values = [v for v in values if isinstance(v, (int, float))]
+        values: list[float] = []
+        for e in candidate_events:
+            e_ts = as_utc(e.timestamp)
+            split = ct.split_across_days(e.data, e_ts, tz)
+            if split:
+                contribution = split.get(today_key, {}).get(f.name)
+                if contribution is not None:
+                    values.append(contribution)
+                continue
+            if e_ts < today_start:
+                continue  # didn't start today and isn't a split-eligible span
+            val = e.data.get(f.name)
+            if isinstance(val, (int, float)):
+                values.append(val)
         agg = _agg_value(f, values)
         today[f.name] = round(agg, 1) if agg is not None else 0.0
 
@@ -577,12 +595,27 @@ def stats(
 
     prev_ts = None
     for e in events:
+        # events belong to the day they *started* - except chore types with
+        # a real duration that can cross midnight (sleep), whose split
+        # values across the days it actually spans (see split_across_days).
         day = e.timestamp.astimezone(tz).date().isoformat()
         daily_counts[day] += 1
+
+        split = ct.split_across_days(e.data, e.timestamp, tz)
+        claimed_fields: set[str] = set()
+        if split:
+            for split_day, fields in split.items():
+                for fname, contribution in fields.items():
+                    daily_values[split_day][fname].append(contribution)
+                    claimed_fields.add(fname)
+
         for f in numeric_fields_defs:
+            if f.name in claimed_fields:
+                continue
             val = e.data.get(f.name)
             if isinstance(val, (int, float)):
                 daily_values[day][f.name].append(val)
+
         if prev_ts is not None:
             intervals_minutes.append((e.timestamp - prev_ts).total_seconds() / 60)
         prev_ts = e.timestamp
