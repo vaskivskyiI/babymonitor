@@ -1,9 +1,244 @@
 // Baby Monitor frontend - vanilla JS, no build step, no external deps.
 
+// ---------- cookies ----------
+
+function setCookie(name, value, days = 400) {
+  const expires = new Date(Date.now() + days * 86400000).toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; samesite=lax`;
+}
+
+function getCookie(name) {
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+// ---------- i18n ----------
+//
+// EN/UK dictionary keyed by the exact English source string. `t()` looks a
+// string up as-is (used for static chrome and for chore-type/field labels,
+// which are always fixed English strings coming from the API for built-in
+// types - custom user-created types just pass through untranslated, which
+// is correct since the user typed them in whatever language they wanted).
+// `tSummary()` instead does a global longest-phrase-first substring swap,
+// since an event's `summary` is a short string *composed* server-side from
+// several of these same fixed phrases (e.g. "🤱 Breast 80ml") rather than
+// one dictionary entry on its own.
+const I18N = {
+  uk: {
+    // topbar / tabs
+    "Dashboard": "Панель",
+    "History": "Історія",
+    "Stats": "Статистика",
+    "Settings": "Налаштування",
+    // dashboard
+    "No events yet": "Ще немає записів",
+    "Edit last entry": "Редагувати останній запис",
+    "Add a calendar alarm for this": "Додати нагадування в календар",
+    "Start a new one": "Почати новий запис",
+    "+ Log now": "+ Записати зараз",
+    "+ New": "+ Новий",
+    "Today:": "Сьогодні:",
+    "Next: tomorrow": "Наступний: завтра",
+    "Due today": "Сьогодні",
+    "Overdue by": "Прострочено на",
+    "Next": "Наступний",
+    "Start": "Почати",
+    "End": "Завершити",
+    "ago": "тому",
+    "in": "через",
+    "just now": "щойно",
+    "old": "вік",
+    "weight": "вага",
+    "height": "зріст",
+    // modal
+    "Log ": "Записати ",
+    "Add to ": "Додати до ",
+    "Edit ": "Редагувати ",
+    "End ": "Завершити ",
+    "Delete": "Видалити",
+    "Close": "Закрити",
+    "Saving…": "Збереження…",
+    "Saved": "Збережено",
+    "+ Add value": "+ Додати значення",
+    "+ Add checkpoint": "+ Додати контрольну точку",
+    "Time": "Час",
+    "Delete this event?": "Видалити цей запис?",
+    "Deleted": "Видалено",
+    // chore type labels
+    "Diaper Change": "Зміна підгузка",
+    "Feeding": "Годування",
+    "Height": "Зріст",
+    "Probiotic": "Пробіотик",
+    "Pumping": "Зціджування",
+    "Sleep": "Сон",
+    "Weight": "Вага",
+    // field labels
+    "Pee": "Пісяв",
+    "Poop": "Какав",
+    "Peed during the change": "Пісяв під час зміни",
+    "Pooped during the change": "Какав під час зміни",
+    "Notes": "Нотатки",
+    "Checkpoints": "Контрольні точки",
+    "Type": "Тип",
+    "Breast": "Груди",
+    "Breast (left)": "Груди (ліва)",
+    "Breast (right)": "Груди (права)",
+    "Pumped milk (bottle)": "Зціджене молоко (пляшечка)",
+    "Formula": "Суміш",
+    "Weight before": "Вага до",
+    "Weight after": "Вага після",
+    "Amount": "Кількість",
+    "Note": "Примітка",
+    "Total breast milk": "Всього грудного молока",
+    "Total formula": "Всього суміші",
+    "Total food": "Всього їжі",
+    "Sub-steps": "Під-кроки",
+    "Side": "Сторона",
+    "Left": "Ліва",
+    "Right": "Права",
+    "Both": "Обидві",
+    "Duration": "Тривалість",
+    "Total amount": "Загальна кількість",
+    "Woke up at": "Прокинувся о",
+    // history
+    "All types": "Всі типи",
+    "Refresh": "Оновити",
+    "No events yet.": "Ще немає записів.",
+    // stats
+    "← All": "← Всі",
+    "Last 24h": "Останні 24 год",
+    "Last 7 days": "Останні 7 днів",
+    "Last 14 days": "Останні 14 днів",
+    "Last 30 days": "Останні 30 днів",
+    "Last 90 days": "Останні 90 днів",
+    "Last year": "Останній рік",
+    "All time": "Весь час",
+    "Loading…": "Завантаження…",
+    "No data yet": "Ще немає даних",
+    "No chore types yet.": "Ще немає типів подій.",
+    "No data for this period.": "Немає даних за цей період.",
+    "total": "всього",
+    "Events per day": "Подій на день",
+    "typical range per": "типовий діапазон за даними",
+    "Shaded band = commonly-cited normal range": "Затінена смуга = загальновизнаний нормальний діапазон",
+    "General guidance only, not medical advice.": "Лише загальна інформація, не медична консультація.",
+    "Actual weight": "Фактична вага",
+    "Trend (dashed = projected)": "Тренд (пунктир = прогноз)",
+    "Ideal range (age-based)": "Ідеальний діапазон (за віком)",
+    "Weight over time": "Вага з часом",
+    "Weight gain (g/day, between weigh-ins)": "Приріст ваги (г/день, між зважуваннями)",
+    "events": "подій",
+    "avg interval": "серед. інтервал",
+    // settings
+    "Chore types": "Типи подій",
+    "+ Add": "+ Додати",
+    "Reminders": "Нагадування",
+    "Save": "Зберегти",
+    "Edit": "Редагувати",
+    "custom": "власний",
+    "This also deletes all of its logged events.": "Це також видалить усі пов'язані записи.",
+    "no reminder": "без нагадування",
+    "Baby profile": "Профіль малюка",
+    "days old": "днів",
+    "Name": "Ім'я",
+    "Birth date": "Дата народження",
+    "Birth weight (g)": "Вага при народженні (г)",
+    "Timezone": "Часовий пояс",
+    "Auto-detected from your device": "Визначено автоматично з вашого пристрою",
+    "Reminder": "Нагадування",
+    "Session window": "Вікно сесії",
+    "min": "хв",
+    "Due once per calendar day": "Раз на календарний день",
+    // toasts / errors
+    "Error: ": "Помилка: ",
+    "Quick action added": "Швидку дію додано",
+    "Label and value are required": "Потрібні мітка та значення",
+    "Alarm downloaded - open it to add to your calendar": "Нагадування завантажено - відкрийте, щоб додати в календар",
+    " logged": " записано",
+    // summary phrases (composed server-side; matched as substrings via tSummary)
+    "💊 Given": "💊 Дано",
+    "😴 Sleeping...": "😴 Спить...",
+    "😴 Slept": "😴 Спав",
+    "😴 Sleep": "😴 Сон",
+    "🍶 Pumping": "🍶 Зціджування",
+    "⚖️ Weight": "⚖️ Вага",
+    "📏 Height": "📏 Зріст",
+    "🤱 Breast": "🤱 Груди",
+    "🍼 Formula": "🍼 Суміш",
+    "💧 Pee": "💧 Пісяв",
+    "💩 Poop": "💩 Какав",
+    "Dry change": "Суха зміна",
+    "peed during change": "пісяв під час зміни",
+    "pooped during change": "какав під час зміни",
+    "💧 Wet": "💧 Мокрий",
+    "💩 Dirty": "💩 Брудний",
+    "💧💩 Both": "💧💩 Обидва",
+  },
+};
+
+// order longest-key-first once, so tSummary()'s substring pass never lets a
+// short phrase (e.g. "Sleep") shadow a longer one that contains it (e.g.
+// "Sleeping...", "Slept") before the longer one gets its turn.
+const I18N_SUMMARY_KEYS = {};
+for (const lang of Object.keys(I18N)) {
+  I18N_SUMMARY_KEYS[lang] = Object.keys(I18N[lang]).sort((a, b) => b.length - a.length);
+}
+
+function detectDefaultLang() {
+  const nav = (navigator.language || "en").toLowerCase();
+  return nav.startsWith("uk") ? "uk" : "en";
+}
+
+function t(str) {
+  if (str == null) return str;
+  const dict = I18N[state.lang];
+  return (dict && dict[str]) ?? str;
+}
+
+// For strings *composed* elsewhere (server-side summaries) rather than
+// looked up whole - swaps every known phrase it contains.
+function tSummary(str) {
+  if (!str || state.lang === "en") return str;
+  const dict = I18N[state.lang];
+  let result = str;
+  for (const key of I18N_SUMMARY_KEYS[state.lang]) {
+    if (result.includes(key)) result = result.split(key).join(dict[key]);
+  }
+  return result;
+}
+
+function setLang(lang) {
+  state.lang = lang;
+  setCookie("bm_lang", lang);
+  document.documentElement.lang = lang;
+  applyStaticTranslations();
+  loadDashboard();
+  const activeTab = document.querySelector(".tab-btn.active").dataset.tab;
+  if (activeTab === "history") loadHistory();
+  if (activeTab === "settings") loadSettings();
+  if (activeTab === "stats") {
+    const detailVisible = !document.getElementById("stats-detail").classList.contains("hidden");
+    if (detailVisible) loadStats();
+    else loadStatsOverview();
+  }
+}
+
+// Static (load-time, never-rebuilt) chrome text - tab labels, section
+// headings, modal titles baked into index.html rather than generated by JS.
+function applyStaticTranslations() {
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+    el.placeholder = t(el.dataset.i18nPlaceholder);
+  });
+}
+
 const state = {
   choreTypes: [],
   currentEdit: null, // {mode: 'create'|'edit', choreType, eventId}
   profile: null,
+  lang: getCookie("bm_lang") || detectDefaultLang(),
 };
 
 // ---------- helpers ----------
@@ -23,14 +258,14 @@ async function api(path, opts = {}) {
 
 function toast(msg) {
   const el = document.getElementById("toast");
-  el.textContent = msg;
+  el.textContent = tSummary(msg);
   el.classList.remove("hidden");
   setTimeout(() => el.classList.add("hidden"), 2500);
 }
 
 function fmtDurationMinutes(minutes) {
   minutes = Math.round(minutes);
-  if (minutes <= 90) return `${minutes}min`;
+  if (minutes <= 90) return `${minutes}${t("min")}`;
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return m ? `${h}h ${m}m` : `${h}h`;
@@ -50,7 +285,9 @@ function fmtClockTime(dateOrIso) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function fmtRelative(dateIso, futureLabel = "in") {
+// bare=true returns just the duration ("2h 15m"), no "ago"/"in" wrapper -
+// used where the caller supplies its own prefix (e.g. "Overdue by 2h 15m").
+function fmtRelative(dateIso, futureLabel = "in", bare = false) {
   const now = new Date();
   const d = new Date(dateIso);
   let diffMs = d - now;
@@ -58,12 +295,12 @@ function fmtRelative(dateIso, futureLabel = "in") {
   diffMs = Math.abs(diffMs);
   const mins = Math.round(diffMs / 60000);
   let text;
-  if (mins < 1) text = "just now";
+  if (mins < 1) return t("just now");
   else if (mins < 60) text = `${mins}m`;
   else if (mins < 60 * 24) text = `${Math.floor(mins / 60)}h ${mins % 60}m`;
   else text = `${Math.floor(mins / (60 * 24))}d ${Math.floor((mins % (60 * 24)) / 60)}h`;
-  if (text === "just now") return text;
-  return future ? `${futureLabel} ${text}` : `${text} ago`;
+  if (bare) return text;
+  return future ? `${t(futureLabel)} ${text}` : `${text} ${t("ago")}`;
 }
 
 function toLocalInputValue(date) {
@@ -123,18 +360,18 @@ function renderBabyInfoBar(profile, statuses) {
   const chips = [];
 
   const ageText = profile && fmtAge(profile.age_days);
-  if (ageText) chips.push(`<div class="info-chip"><span class="info-val">${ageText}</span><span class="info-lbl">old</span></div>`);
+  if (ageText) chips.push(`<div class="info-chip"><span class="info-val">${ageText}</span><span class="info-lbl">${t("old")}</span></div>`);
 
   const w = weightStatus?.last_event?.data?.weight_g;
   if (w != null) {
     chips.push(
-      `<div class="info-chip"><span class="info-val">${(w / 1000).toFixed(2)}kg</span><span class="info-lbl">weight</span></div>`
+      `<div class="info-chip"><span class="info-val">${(w / 1000).toFixed(2)}kg</span><span class="info-lbl">${t("weight")}</span></div>`
     );
   }
 
   const h = heightStatus?.last_event?.data?.height_cm;
   if (h != null) {
-    chips.push(`<div class="info-chip"><span class="info-val">${h}cm</span><span class="info-lbl">height</span></div>`);
+    chips.push(`<div class="info-chip"><span class="info-val">${h}cm</span><span class="info-lbl">${t("height")}</span></div>`);
   }
 
   if (!chips.length) {
@@ -169,15 +406,15 @@ async function loadDashboard() {
     // The pencil is a fast path to fix up/fill in the previous entry (e.g. add
     // the amount to a pumping session logged when it started) without going
     // through History.
-    let lastHtml = '<div class="last-chip empty">No events yet</div>';
+    let lastHtml = `<div class="last-chip empty">${t("No events yet")}</div>`;
     if (s.last_event) {
       const openBadge = s.open_event_id ? '<span class="live-pill">live</span>' : "";
       lastHtml = `<div class="last-chip">
           <div class="last-chip-text">
-            <div class="last-summary">${s.last_event.summary}${openBadge}</div>
+            <div class="last-summary">${tSummary(s.last_event.summary)}${openBadge}</div>
             <div class="last-time">${fmtRelative(s.last_event.timestamp)}</div>
           </div>
-          <button type="button" class="edit-last-btn" data-action="edit-last" title="Edit last entry">✏️</button>
+          <button type="button" class="edit-last-btn" data-action="edit-last" title="${t("Edit last entry")}">✏️</button>
         </div>`;
     }
 
@@ -189,18 +426,18 @@ async function loadDashboard() {
       // "Tomorrow" once satisfied, or an overdue-by based on the last dose
       // time + 24h (a more intuitive reference than "since midnight").
       if (!s.overdue) {
-        dueText = "Next: tomorrow";
+        dueText = t("Next: tomorrow");
       } else {
         dueClass = "overdue";
         const reference = s.last_event ? new Date(new Date(s.last_event.timestamp).getTime() + 24 * 3600 * 1000) : null;
         dueText =
           reference && reference <= new Date()
-            ? `Overdue by ${fmtRelative(reference.toISOString()).replace(" ago", "")} (${fmtClockTime(reference)})`
-            : "Due today";
+            ? `${t("Overdue by")} ${fmtRelative(reference.toISOString(), "in", true)} (${fmtClockTime(reference)})`
+            : t("Due today");
       }
     } else if (s.next_due) {
       dueClass = s.overdue ? "overdue" : "ok";
-      dueText = `${s.overdue ? "Overdue by" : "Next"} ${fmtRelative(s.next_due).replace("ago", "").replace("in ", "")} (${fmtClockTime(s.next_due)})`;
+      dueText = `${s.overdue ? t("Overdue by") : t("Next")} ${fmtRelative(s.next_due, "in", true)} (${fmtClockTime(s.next_due)})`;
     }
     // "Set alarm" - only for a real future due time (a plain interval-based
     // reminder, not the daily-reset kind, and not already overdue - there's
@@ -209,7 +446,7 @@ async function loadDashboard() {
     const dueHtml = dueText
       ? `<div class="due ${dueClass}">
           <span>${dueText}</span>
-          ${showAlarm ? `<button type="button" class="alarm-btn" data-action="alarm" title="Add a calendar alarm for this">🔔</button>` : ""}
+          ${showAlarm ? `<button type="button" class="alarm-btn" data-action="alarm" title="${t("Add a calendar alarm for this")}">🔔</button>` : ""}
         </div>`
       : "";
 
@@ -218,9 +455,9 @@ async function loadDashboard() {
     if (ct && ct.has_start_end) {
       if (s.open_event_id) {
         targetEventId = s.open_event_id;
-        buttonsHtml = `<button class="quick-btn end-btn" data-action="end">⏰ End ${ct.label}</button>`;
+        buttonsHtml = `<button class="quick-btn end-btn" data-action="end">⏰ ${t("End")} ${t(ct.label)}</button>`;
       } else {
-        buttonsHtml = `<button class="quick-btn" data-action="start">${ct.icon} Start ${ct.label}</button>`;
+        buttonsHtml = `<button class="quick-btn" data-action="start">${ct.icon} ${t("Start")} ${t(ct.label)}</button>`;
       }
     } else if (ct && ct.quick_actions && ct.quick_actions.length) {
       // one-tap presets - logged/updated instantly, no form. Field-targeting
@@ -233,27 +470,27 @@ async function loadDashboard() {
       buttonsHtml = `
         <div class="quick-actions-row">
           ${ct.quick_actions
-            .map((qa, i) => `<button class="quick-btn pill" data-quick="${i}">${qa.label}</button>`)
+            .map((qa, i) => `<button class="quick-btn pill" data-quick="${i}">${tSummary(qa.label)}</button>`)
             .join("")}
-          <button class="icon-btn more-btn" data-action="new" title="Start a new one">+</button>
+          <button class="icon-btn more-btn" data-action="new" title="${t("Start a new one")}">+</button>
         </div>`;
     } else if (s.active_session_event_id) {
       targetEventId = s.active_session_event_id;
-      buttonsHtml = `<button class="quick-btn secondary-btn" data-action="new">+ New</button>`;
+      buttonsHtml = `<button class="quick-btn secondary-btn" data-action="new">${t("+ New")}</button>`;
     } else {
-      buttonsHtml = `<button class="quick-btn" data-action="new">+ Log now</button>`;
+      buttonsHtml = `<button class="quick-btn" data-action="new">${t("+ Log now")}</button>`;
     }
 
     let todayHtml = "";
     if (ct) {
       const parts = ct.fields
         .filter((f) => f.numeric_stat && (s.today[f.name] || 0) > 0)
-        .map((f) => `${f.label}: ${fmtFieldValue(f, s.today[f.name])}`);
-      if (parts.length) todayHtml = `<div class="today">Today: ${parts.join(", ")}</div>`;
+        .map((f) => `${t(f.label)}: ${fmtFieldValue(f, s.today[f.name])}`);
+      if (parts.length) todayHtml = `<div class="today">${t("Today:")} ${parts.join(", ")}</div>`;
     }
     card.innerHTML = `
       <div class="icon">${s.icon}</div>
-      <div class="label">${s.label}</div>
+      <div class="label">${t(s.label)}</div>
       ${lastHtml}
       ${dueHtml}
       ${todayHtml}
@@ -408,92 +645,98 @@ function buildFieldHtml(field, value) {
   if (field.type === "boolean") {
     return `<div class="field field-bool">
       <input type="checkbox" id="${id}" name="${field.name}" ${val ? "checked" : ""}>
-      <label for="${id}">${field.label}</label>
+      <label for="${id}">${t(field.label)}</label>
     </div>`;
   }
   if (field.type === "select") {
     const opts = field.options
-      .map((o) => `<option value="${o.value}" ${val === o.value ? "selected" : ""}>${o.label}</option>`)
+      .map((o) => `<option value="${o.value}" ${val === o.value ? "selected" : ""}>${t(o.label)}</option>`)
       .join("");
     return `<div class="field">
-      <label for="${id}">${field.label}</label>
+      <label for="${id}">${t(field.label)}</label>
       <select id="${id}" name="${field.name}" ${field.required ? "required" : ""}>${opts}</select>
     </div>`;
   }
   if (field.type === "textarea") {
     return `<div class="field">
-      <label for="${id}">${field.label}</label>
+      <label for="${id}">${t(field.label)}</label>
       <textarea id="${id}" name="${field.name}">${val || ""}</textarea>
     </div>`;
   }
   if (field.type === "number") {
     return `<div class="field">
-      <label for="${id}">${field.label}${field.unit ? ` (${field.unit})` : ""}</label>
+      <label for="${id}">${t(field.label)}${field.unit ? ` (${field.unit})` : ""}</label>
       <input type="number" step="any" inputmode="decimal" id="${id}" name="${field.name}" value="${val ?? ""}">
     </div>`;
   }
   if (field.type === "datetime") {
     return `<div class="field">
-      <label for="${id}">${field.label}</label>
+      <label for="${id}">${t(field.label)}</label>
       <input type="datetime-local" id="${id}" name="${field.name}" value="${val ? toLocalInputValue(val) : ""}">
     </div>`;
   }
   if (field.type === "number_list") {
     const items = Array.isArray(val) ? val : [];
     return `<div class="field number-list" data-name="${field.name}">
-      <label>${field.label}${field.unit ? ` (${field.unit})` : ""}</label>
+      <label>${t(field.label)}${field.unit ? ` (${field.unit})` : ""}</label>
       <div class="number-list-rows"></div>
-      <button type="button" class="btn secondary add-row-btn">+ Add value</button>
+      <button type="button" class="btn secondary add-row-btn">${t("+ Add value")}</button>
     </div>`;
   }
   if (field.type === "entries") {
     return `<div class="field entries-field" data-name="${field.name}">
-      <label>${field.label}</label>
+      <label>${t(field.label)}</label>
       ${field.help ? `<div class="field-help">${field.help}</div>` : ""}
       <div class="entries-rows"></div>
-      <button type="button" class="btn secondary add-entry-btn">+ Add checkpoint</button>
+      <button type="button" class="btn secondary add-entry-btn">${t("+ Add checkpoint")}</button>
     </div>`;
   }
   // text (default)
   return `<div class="field">
-    <label for="${id}">${field.label}</label>
+    <label for="${id}">${t(field.label)}</label>
     <input type="text" id="${id}" name="${field.name}" value="${val || ""}">
   </div>`;
 }
 
-function attachNumberListHandlers(form, field, initialValues) {
+function attachNumberListHandlers(form, field, initialValues, onMutate) {
   const wrap = form.querySelector(`.number-list[data-name="${field.name}"]`);
   const rows = wrap.querySelector(".number-list-rows");
   function addRow(v) {
     const row = document.createElement("div");
     row.className = "number-list-row";
     row.innerHTML = `<input type="number" step="any" value="${v ?? ""}"><button type="button" class="icon-btn remove-row">✕</button>`;
-    row.querySelector(".remove-row").addEventListener("click", () => row.remove());
+    row.querySelector(".remove-row").addEventListener("click", () => {
+      row.remove();
+      onMutate();
+    });
     rows.appendChild(row);
   }
   (initialValues && initialValues.length ? initialValues : [null]).forEach(addRow);
-  wrap.querySelector(".add-row-btn").addEventListener("click", () => addRow(null));
+  wrap.querySelector(".add-row-btn").addEventListener("click", () => {
+    addRow(null);
+    onMutate();
+  });
 }
 
 function buildEntryRowHtml(entryFields, entry) {
-  let inputsHtml = `<input type="datetime-local" class="entry-timestamp" title="Time">`;
+  let inputsHtml = `<input type="datetime-local" class="entry-timestamp" title="${t("Time")}">`;
   entryFields.forEach((f) => {
     const val = entry ? entry[f.name] : f.default;
     if (f.type === "select") {
       const opts = f.options
-        .map((o) => `<option value="${o.value}" ${val === o.value ? "selected" : ""}>${o.label}</option>`)
+        .map((o) => `<option value="${o.value}" ${val === o.value ? "selected" : ""}>${t(o.label)}</option>`)
         .join("");
       inputsHtml += `<select class="entry-field" data-name="${f.name}">${opts}</select>`;
     } else if (f.type === "number") {
-      inputsHtml += `<input type="number" step="any" class="entry-field" data-name="${f.name}" placeholder="${f.label}${f.unit ? ` (${f.unit})` : ""}" value="${val ?? ""}">`;
+      inputsHtml += `<input type="number" step="any" class="entry-field" data-name="${f.name}" placeholder="${t(f.label)}${f.unit ? ` (${f.unit})` : ""}" value="${val ?? ""}">`;
     } else {
-      inputsHtml += `<input type="text" class="entry-field" data-name="${f.name}" placeholder="${f.label}" value="${val ?? ""}">`;
+      inputsHtml += `<input type="text" class="entry-field" data-name="${f.name}" placeholder="${t(f.label)}" value="${val ?? ""}">`;
     }
   });
   return `<div class="entry-row">${inputsHtml}<button type="button" class="icon-btn remove-entry">✕</button></div>`;
 }
 
-function attachEntriesHandlers(form, field, initialEntries) {
+function attachEntriesHandlers(form, field, initialEntries, onMutate) {
   const wrap = form.querySelector(`.entries-field[data-name="${field.name}"]`);
   const rows = wrap.querySelector(".entries-rows");
   function addRow(entry) {
@@ -501,7 +744,10 @@ function attachEntriesHandlers(form, field, initialEntries) {
     wrapper.innerHTML = buildEntryRowHtml(field.entry_fields, entry);
     const rowEl = wrapper.firstElementChild;
     rowEl.querySelector(".entry-timestamp").value = toLocalInputValue(entry ? entry.timestamp : new Date());
-    rowEl.querySelector(".remove-entry").addEventListener("click", () => rowEl.remove());
+    rowEl.querySelector(".remove-entry").addEventListener("click", () => {
+      rowEl.remove();
+      onMutate();
+    });
     rows.appendChild(rowEl);
     return rowEl;
   }
@@ -518,77 +764,34 @@ function attachEntriesHandlers(form, field, initialEntries) {
         if (srcInput && destInput && srcInput.value !== "") destInput.value = srcInput.value;
       });
     }
+    onMutate();
   });
 }
 
-function openForm(choreTypeKey, mode, event) {
-  const ct = choreType(choreTypeKey);
-  state.currentEdit = { mode, choreType: choreTypeKey, eventId: event ? event.id : null };
-  const titlePrefixes = { checkpoint: "Add to ", edit: "Edit ", end: "End " };
-  document.getElementById("modal-title").textContent = (titlePrefixes[mode] || "Log ") + ct.label;
-
-  const form = document.getElementById("modal-form");
-  const data = event ? { ...event.data } : {};
-  const editableFields = ct.fields.filter((f) => !f.computed);
-
-  if (mode === "end") {
-    // prefill any not-yet-set datetime field (e.g. sleep's "ended_at") with now
-    editableFields.forEach((f) => {
-      if (f.type === "datetime" && !data[f.name]) data[f.name] = new Date().toISOString();
-    });
-  }
-
-  // Entries-based types (feeding, pumping, ...) derive their own time from
-  // the first checkpoint - showing a separate top-level "Time" here would
-  // just be a second, independently-editable clock for the same moment.
-  const hasEntries = editableFields.some((f) => f.type === "entries");
-  let html = hasEntries
-    ? ""
-    : `<div class="field">
-      <label for="f_timestamp">Time</label>
-      <input type="datetime-local" id="f_timestamp" name="timestamp" required>
-    </div>`;
-  html += editableFields.map((f) => buildFieldHtml(f, data[f.name])).join("");
-  html += `<div class="form-actions">
-      ${mode === "edit" ? '<button type="button" id="delete-btn" class="btn danger">Delete</button>' : ""}
-      <button type="button" id="cancel-btn" class="btn secondary">Cancel</button>
-      <button type="submit" class="btn">Save</button>
-    </div>`;
-  form.innerHTML = html;
-
-  const timestampInput = form.querySelector("#f_timestamp");
-  if (timestampInput) timestampInput.value = toLocalInputValue(event ? event.timestamp : new Date());
-
-  editableFields
-    .filter((f) => f.type === "number_list")
-    .forEach((f) => attachNumberListHandlers(form, f, data[f.name]));
-
-  editableFields
-    .filter((f) => f.type === "entries")
-    .forEach((f) => {
-      let initial = data[f.name] || [];
-      if (mode === "checkpoint") initial = [...initial, null]; // pre-append a blank checkpoint to fill in
-      attachEntriesHandlers(form, f, initial);
-    });
-
-  document.getElementById("cancel-btn").addEventListener("click", closeModal);
-  const delBtn = document.getElementById("delete-btn");
-  if (delBtn) delBtn.addEventListener("click", () => deleteEvent(event.id));
-
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    await submitForm(ct, form, event);
+function debounce(fn, wait) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), wait);
   };
-
-  document.getElementById("modal-backdrop").classList.remove("hidden");
 }
 
-function closeModal() {
-  document.getElementById("modal-backdrop").classList.add("hidden");
-  state.currentEdit = null;
+function setSaveStatus(text) {
+  const el = document.getElementById("save-status");
+  if (!el) return;
+  const translated = t(text);
+  el.textContent = translated;
+  if (text) clearTimeout(el._fadeTimer);
+  if (text === "Saved") {
+    el._fadeTimer = setTimeout(() => {
+      if (el.textContent === translated) el.textContent = "";
+    }, 1500);
+  }
 }
 
-async function submitForm(ct, form, existingEvent) {
+// Reads the current form into {timestamp, data} matching the API's event
+// shape. Pure/side-effect-free so it can be called on every field change.
+function buildEventData(ct, form) {
   const data = {};
   ct.fields
     .filter((f) => !f.computed)
@@ -629,30 +832,140 @@ async function submitForm(ct, form, existingEvent) {
   // from the first checkpoint (see ChoreType.event_timestamp).
   const timestampField = form.querySelector("#f_timestamp");
   const timestamp = timestampField ? fromLocalInputValue(timestampField.value) : undefined;
+  return { timestamp, data };
+}
 
-  try {
-    if (existingEvent) {
-      await api(`/api/events/${existingEvent.id}`, {
-        method: "PUT",
-        body: JSON.stringify({ timestamp, data }),
-      });
-      toast("Updated");
-    } else {
-      await api("/api/events", {
-        method: "POST",
-        body: JSON.stringify({ chore_type: ct.key, timestamp, data }),
-      });
-      toast("Logged " + ct.label);
-    }
-    closeModal();
-    refreshCurrentView();
-  } catch (err) {
-    toast("Error: " + err.message);
+// autosaveChain serializes saves across the whole app (only one modal is
+// ever open at a time) so two rapid field changes can't race each other.
+let autosaveChain = Promise.resolve();
+
+// #modal-form itself is never recreated (only its innerHTML is replaced on
+// every openForm() call), so the change listener is bound once here and
+// dispatches to whichever save function the currently-open modal registered
+// - binding a fresh listener inside openForm() every time would stack up
+// one extra listener per modal open, each still holding the *previous*
+// modal's stale closure (wrong chore type, wrong form fields).
+let currentDebouncedSave = null;
+document.getElementById("modal-form").addEventListener("change", (e) => {
+  if (e.target.closest(".form-actions")) return;
+  if (currentDebouncedSave) currentDebouncedSave();
+});
+
+function openForm(choreTypeKey, mode, event) {
+  const ct = choreType(choreTypeKey);
+  state.currentEdit = { mode, choreType: choreTypeKey, eventId: event ? event.id : null };
+  // local to this modal session - never read state.currentEdit for saves,
+  // so a stale debounced save from a since-closed form can't be confused
+  // about which event it belongs to if another modal opens in the meantime
+  let currentEventId = event ? event.id : null;
+
+  const titlePrefixes = { checkpoint: "Add to ", edit: "Edit ", end: "End " };
+  document.getElementById("modal-title").textContent = t(titlePrefixes[mode] || "Log ") + t(ct.label);
+
+  const form = document.getElementById("modal-form");
+  const data = event ? { ...event.data } : {};
+  const editableFields = ct.fields.filter((f) => !f.computed);
+
+  if (mode === "end") {
+    // prefill any not-yet-set datetime field (e.g. sleep's "ended_at") with now
+    editableFields.forEach((f) => {
+      if (f.type === "datetime" && !data[f.name]) data[f.name] = new Date().toISOString();
+    });
   }
+
+  // Entries-based types (feeding, pumping, ...) derive their own time from
+  // the first checkpoint - showing a separate top-level "Time" here would
+  // just be a second, independently-editable clock for the same moment.
+  const hasEntries = editableFields.some((f) => f.type === "entries");
+  let html = hasEntries
+    ? ""
+    : `<div class="field">
+      <label for="f_timestamp">${t("Time")}</label>
+      <input type="datetime-local" id="f_timestamp" name="timestamp" required>
+    </div>`;
+  html += editableFields.map((f) => buildFieldHtml(f, data[f.name])).join("");
+  html += `<div class="form-actions">
+      <button type="button" id="delete-btn" class="btn danger ${currentEventId ? "" : "hidden"}">${t("Delete")}</button>
+      <span id="save-status" class="save-status"></span>
+      <button type="button" id="close-modal-btn" class="btn secondary">${t("Close")}</button>
+    </div>`;
+  form.innerHTML = html;
+  form.onsubmit = (e) => e.preventDefault(); // no submit button anymore, but Enter shouldn't reload the page
+
+  const timestampInput = form.querySelector("#f_timestamp");
+  if (timestampInput) timestampInput.value = toLocalInputValue(event ? event.timestamp : new Date());
+
+  const delBtn = document.getElementById("delete-btn");
+
+  // Every field change (blur-after-edit for text/number/date, immediate for
+  // checkboxes/selects) saves right away - create on the first change, then
+  // update in place. No Save button; Close just dismisses the modal.
+  //
+  // The form is read (buildEventData) synchronously, right when the change
+  // happens - not inside the deferred flush below. #modal-form is reused
+  // (only its innerHTML is swapped) across modal opens, so by the time a
+  // debounced flush actually runs, the user may already have closed this
+  // modal and opened a different one; reading the form lazily at flush time
+  // would then read the *other* modal's fields under this one's chore type.
+  const flushSave = (payload) => {
+    autosaveChain = autosaveChain.then(async () => {
+      setSaveStatus("Saving…");
+      try {
+        if (currentEventId) {
+          await api(`/api/events/${currentEventId}`, { method: "PUT", body: JSON.stringify(payload) });
+        } else {
+          const created = await api("/api/events", {
+            method: "POST",
+            body: JSON.stringify({ chore_type: ct.key, ...payload }),
+          });
+          currentEventId = created.id;
+          if (delBtn) delBtn.classList.remove("hidden");
+        }
+        setSaveStatus("Saved");
+        refreshCurrentView();
+      } catch (err) {
+        setSaveStatus("");
+        toast("Error: " + err.message);
+      }
+    });
+    return autosaveChain;
+  };
+  const debouncedFlush = debounce(flushSave, 250);
+  const saveNow = () => flushSave(buildEventData(ct, form));
+  const debouncedSave = () => debouncedFlush(buildEventData(ct, form));
+
+  editableFields
+    .filter((f) => f.type === "number_list")
+    .forEach((f) => attachNumberListHandlers(form, f, data[f.name], debouncedSave));
+
+  editableFields
+    .filter((f) => f.type === "entries")
+    .forEach((f) => {
+      let initial = data[f.name] || [];
+      if (mode === "checkpoint") initial = [...initial, null]; // pre-append a blank checkpoint to fill in
+      attachEntriesHandlers(form, f, initial, debouncedSave);
+    });
+
+  currentDebouncedSave = debouncedSave;
+
+  document.getElementById("close-modal-btn").addEventListener("click", closeModal);
+  if (delBtn) delBtn.addEventListener("click", () => deleteEvent(currentEventId));
+
+  document.getElementById("modal-backdrop").classList.remove("hidden");
+
+  // "End sleep" prefills ended_at programmatically (no user interaction
+  // required) - save it immediately rather than waiting for a field touch.
+  if (mode === "end") saveNow();
+}
+
+function closeModal() {
+  document.getElementById("modal-backdrop").classList.add("hidden");
+  state.currentEdit = null;
+  currentDebouncedSave = null;
 }
 
 async function deleteEvent(id) {
-  if (!confirm("Delete this event?")) return;
+  if (!confirm(t("Delete this event?"))) return;
   await api(`/api/events/${id}`, { method: "DELETE" });
   closeModal();
   toast("Deleted");
@@ -674,13 +987,17 @@ function refreshCurrentView() {
 
 async function loadHistory() {
   const select = document.getElementById("history-filter");
-  if (select.options.length <= 1) {
+  if (select.options.length <= 1 || select.dataset.lang !== state.lang) {
+    const selected = select.value;
+    select.querySelectorAll("option:not(:first-child)").forEach((o) => o.remove());
     state.choreTypes.forEach((ct) => {
       const opt = document.createElement("option");
       opt.value = ct.key;
-      opt.textContent = `${ct.icon} ${ct.label}`;
+      opt.textContent = `${ct.icon} ${t(ct.label)}`;
       select.appendChild(opt);
     });
+    select.dataset.lang = state.lang;
+    select.value = selected;
   }
   const type = select.value;
   const events = await api(`/api/events${type ? `?chore_type=${type}` : ""}`);
@@ -696,8 +1013,8 @@ async function loadHistory() {
     const d = new Date(ev.timestamp);
     item.innerHTML = `
       <div>
-        <div><strong>${ct.icon} ${ev.summary}</strong></div>
-        <div class="meta">${d.toLocaleString()}${ev.notes ? " · " + ev.notes : ""}</div>
+        <div><strong>${ct.icon} ${tSummary(ev.summary)}</strong></div>
+        <div class="meta">${d.toLocaleString(state.lang === "uk" ? "uk-UA" : undefined)}${ev.notes ? " · " + ev.notes : ""}</div>
       </div>
       <div class="actions">
         <button class="icon-btn edit-btn">✏️</button>
@@ -707,7 +1024,7 @@ async function loadHistory() {
     item.querySelector(".del-btn").addEventListener("click", () => deleteEvent(ev.id));
     list.appendChild(item);
   });
-  if (!events.length) list.innerHTML = '<p style="color:var(--muted)">No events yet.</p>';
+  if (!events.length) list.innerHTML = `<p style="color:var(--muted)">${t("No events yet.")}</p>`;
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -865,7 +1182,7 @@ function svgLineChart({ actual = [], trend = [], idealLow = [], idealHigh = [], 
 
 function svgSparkline(points, color) {
   const vals = points.map((p) => p.value).filter((v) => v != null);
-  if (!vals.length) return '<div class="sparkline-empty">No data yet</div>';
+  if (!vals.length) return `<div class="sparkline-empty">${t("No data yet")}</div>`;
   const w = 120;
   const h = 36;
   const max = Math.max(...vals, 1);
@@ -903,7 +1220,7 @@ function showStatsDetail(key) {
 
 async function loadStatsOverview() {
   const box = document.getElementById("stats-overview");
-  box.innerHTML = '<p class="muted-note">Loading…</p>';
+  box.innerHTML = `<p class="muted-note">${t("Loading…")}</p>`;
   const results = await Promise.all(
     state.choreTypes.map((ct) => api(`/api/stats/${ct.key}?all_time=true`).catch(() => null))
   );
@@ -913,7 +1230,7 @@ async function loadStatsOverview() {
     const data = results[i];
     const card = document.createElement("div");
     card.className = "overview-card";
-    let sparkHtml = '<div class="sparkline-empty">No data yet</div>';
+    let sparkHtml = `<div class="sparkline-empty">${t("No data yet")}</div>`;
     let keyStat = "";
     if (data && data.days.length) {
       // pick the most meaningful numeric field for the sparkline: prefer a
@@ -923,12 +1240,12 @@ async function loadStatsOverview() {
       const points = data.days.map((d) => ({ date: d.date, value: field ? d[field.name] : d.count }));
       sparkHtml = svgSparkline(points, "var(--primary)");
       const lastVal = [...points].reverse().find((p) => p.value != null);
-      keyStat = field && lastVal ? `${lastVal.value}${field.unit || ""}` : `${data.total_events} total`;
+      keyStat = field && lastVal ? `${lastVal.value}${t(field.unit || "")}` : `${data.total_events} ${t("total")}`;
     }
     card.innerHTML = `
       <div class="overview-card-head">
         <span class="overview-icon">${ct.icon}</span>
-        <span class="overview-label">${ct.label}</span>
+        <span class="overview-label">${t(ct.label)}</span>
       </div>
       <div class="overview-spark">${sparkHtml}</div>
       <div class="overview-keystat">${keyStat}</div>
@@ -936,20 +1253,26 @@ async function loadStatsOverview() {
     card.addEventListener("click", () => showStatsDetail(ct.key));
     grid.appendChild(card);
   });
-  if (!state.choreTypes.length) box.innerHTML = '<p class="muted-note">No chore types yet.</p>';
+  if (!state.choreTypes.length) box.innerHTML = `<p class="muted-note">${t("No chore types yet.")}</p>`;
 }
 
 async function loadStats(explicitKey) {
   const typeSelect = document.getElementById("stats-type");
   if (typeSelect.options.length === 0) {
+    typeSelect.addEventListener("change", () => loadStats());
+    document.getElementById("stats-days").addEventListener("change", () => loadStats());
+  }
+  if (typeSelect.options.length === 0 || typeSelect.dataset.lang !== state.lang) {
+    const selected = typeSelect.value;
+    typeSelect.querySelectorAll("option").forEach((o) => o.remove());
     state.choreTypes.forEach((ct) => {
       const opt = document.createElement("option");
       opt.value = ct.key;
-      opt.textContent = `${ct.icon} ${ct.label}`;
+      opt.textContent = `${ct.icon} ${t(ct.label)}`;
       typeSelect.appendChild(opt);
     });
-    typeSelect.addEventListener("change", () => loadStats());
-    document.getElementById("stats-days").addEventListener("change", () => loadStats());
+    typeSelect.dataset.lang = state.lang;
+    if (selected) typeSelect.value = selected;
   }
   const key = explicitKey || typeSelect.value || state.choreTypes[0]?.key;
   if (!key) return;
@@ -962,27 +1285,28 @@ async function loadStats(explicitKey) {
 
   const summary = document.getElementById("stats-summary");
   summary.innerHTML = `
-    <div class="stat-box"><div class="num">${data.total_events}</div><div class="lbl">events</div></div>
-    ${data.avg_interval_minutes ? `<div class="stat-box"><div class="num">${(data.avg_interval_minutes / 60).toFixed(1)}h</div><div class="lbl">avg interval</div></div>` : ""}
+    <div class="stat-box"><div class="num">${data.total_events}</div><div class="lbl">${t("events")}</div></div>
+    ${data.avg_interval_minutes ? `<div class="stat-box"><div class="num">${(data.avg_interval_minutes / 60).toFixed(1)}h</div><div class="lbl">${t("avg interval")}</div></div>` : ""}
   `;
 
   const charts = document.getElementById("stats-charts");
   if (!data.days.length && !(data.growth_rate && data.growth_rate.length)) {
-    charts.innerHTML = '<p style="color:var(--muted)">No data for this period.</p>';
+    charts.innerHTML = `<p style="color:var(--muted)">${t("No data for this period.")}</p>`;
     return;
   }
 
   function refFooter(refInfo) {
     if (!refInfo) return "";
     const src = refInfo.source_label
-      ? ` &middot; typical range per <a href="${refInfo.source_url}" target="_blank" rel="noopener">${refInfo.source_label}</a>`
+      ? ` &middot; ${t("typical range per")} <a href="${refInfo.source_url}" target="_blank" rel="noopener">${refInfo.source_label}</a>`
       : "";
-    return `<div class="chart-ref-note">Shaded band = commonly-cited normal range${src}. General guidance only, not medical advice.</div>`;
+    return `<div class="chart-ref-note">${t("Shaded band = commonly-cited normal range")}${src}. ${t("General guidance only, not medical advice.")}</div>`;
   }
 
+  const statCt = choreType(key);
   let html = "";
   if (data.days.length) {
-    html += `<div class="chart-block"><h3>Events per day</h3>${svgBarChart(
+    html += `<div class="chart-block"><h3>${t("Events per day")}</h3>${svgBarChart(
       data.days.map((d) => ({ date: d.date, value: d.count, ageDays: d.age_days })),
       "var(--primary)"
     )}</div>`;
@@ -1000,7 +1324,9 @@ async function loadStats(explicitKey) {
       const refMeta = refInfo
         ? { source_label: refInfo[`${f}_ref_source_label`], source_url: refInfo[`${f}_ref_source_url`] }
         : null;
-      html += `<div class="chart-block"><h3>${f.replace(/_/g, " ")}</h3>${svgBarChart(points, "var(--ok)")}${refFooter(refMeta)}</div>`;
+      const fieldDef = statCt && statCt.fields.find((x) => x.name === f);
+      const heading = fieldDef ? t(fieldDef.label) : f.replace(/_/g, " ");
+      html += `<div class="chart-block"><h3>${heading}</h3>${svgBarChart(points, "var(--ok)")}${refFooter(refMeta)}</div>`;
     });
   }
 
@@ -1011,11 +1337,11 @@ async function loadStats(explicitKey) {
     const idealLow = ideal.map((p) => ({ date: p.date, value: p.low }));
     const idealHigh = ideal.map((p) => ({ date: p.date, value: p.high }));
     const legend = `<div class="chart-legend">
-        <span><i class="dot" style="background:var(--ok)"></i>Actual weight</span>
-        <span><i class="dot" style="background:var(--primary)"></i>Trend (dashed = projected)</span>
-        <span><i class="dot band"></i>Ideal range (age-based)</span>
+        <span><i class="dot" style="background:var(--ok)"></i>${t("Actual weight")}</span>
+        <span><i class="dot" style="background:var(--primary)"></i>${t("Trend (dashed = projected)")}</span>
+        <span><i class="dot band"></i>${t("Ideal range (age-based)")}</span>
       </div>`;
-    html = `<div class="chart-block"><h3>Weight over time</h3>${svgLineChart({ actual, trend, idealLow, idealHigh, unit: "g" })}${legend}${refFooter({
+    html = `<div class="chart-block"><h3>${t("Weight over time")}</h3>${svgLineChart({ actual, trend, idealLow, idealHigh, unit: "g" })}${legend}${refFooter({
       source_label: "WHO weight-for-age growth guidance",
       source_url: "https://www.mayoclinic.org/healthy-lifestyle/infant-and-toddler-health/expert-answers/infant-growth/faq-20058037",
     })}</div>` + html;
@@ -1030,7 +1356,7 @@ async function loadStats(explicitKey) {
     }));
     const refEntry = data.growth_rate.find((r) => r.ref_source_label);
     const refMeta = refEntry ? { source_label: refEntry.ref_source_label, source_url: refEntry.ref_source_url } : null;
-    html += `<div class="chart-block"><h3>Weight gain (g/day, between weigh-ins)</h3>${svgBarChart(points, "var(--primary)")}${refFooter(refMeta)}</div>`;
+    html += `<div class="chart-block"><h3>${t("Weight gain (g/day, between weigh-ins)")}</h3>${svgBarChart(points, "var(--primary)")}${refFooter(refMeta)}</div>`;
   }
 
   charts.innerHTML = html;
@@ -1127,13 +1453,13 @@ async function loadProfile() {
   const box = document.getElementById("profile-box");
   box.innerHTML = `
     <div class="settings-row profile-row">
-      <div><strong>👶 Baby profile</strong>${p.age_days != null ? ` <span class="age-pill">${p.age_days} days old</span>` : ""}</div>
+      <div><strong>👶 ${t("Baby profile")}</strong>${p.age_days != null ? ` <span class="age-pill">${p.age_days} ${t("days old")}</span>` : ""}</div>
       <div class="row">
-        <label>Name <input type="text" id="profile-name" style="width:120px" value="${p.name || ""}"></label>
-        <label>Birth date <input type="date" id="profile-birthdate" value="${p.birth_date || ""}"></label>
-        <label>Birth weight (g) <input type="number" min="0" id="profile-birthweight" style="width:100px" value="${p.birth_weight_g ?? ""}"></label>
-        <label>Timezone <span class="readonly-value" title="Auto-detected from your device">${p.timezone} 🌐</span></label>
-        <button class="btn secondary" id="save-profile-btn">Save</button>
+        <label>${t("Name")} <input type="text" id="profile-name" style="width:120px" value="${p.name || ""}"></label>
+        <label>${t("Birth date")} <input type="date" id="profile-birthdate" value="${p.birth_date || ""}"></label>
+        <label>${t("Birth weight (g)")} <input type="number" min="0" id="profile-birthweight" style="width:100px" value="${p.birth_weight_g ?? ""}"></label>
+        <label>${t("Timezone")} <span class="readonly-value" title="${t("Auto-detected from your device")}">${p.timezone} 🌐</span></label>
+        <button class="btn secondary" id="save-profile-btn">${t("Save")}</button>
       </div>
     </div>`;
   document.getElementById("save-profile-btn").addEventListener("click", async () => {
@@ -1171,11 +1497,11 @@ async function loadChoreTypesManager() {
         <button type="button" class="icon-btn" data-move="up" ${i === 0 ? "disabled" : ""}>▲</button>
         <button type="button" class="icon-btn" data-move="down" ${i === types.length - 1 ? "disabled" : ""}>▼</button>
       </div>
-      <div class="ct-manage-info">${ct.icon} <strong>${ct.label}</strong>${ct.is_builtin ? "" : ' <span class="custom-pill">custom</span>'}</div>
+      <div class="ct-manage-info">${ct.icon} <strong>${t(ct.label)}</strong>${ct.is_builtin ? "" : ` <span class="custom-pill">${t("custom")}</span>`}</div>
       <div class="ct-manage-actions">
         <label class="switch"><input type="checkbox" class="ct-enabled-toggle" ${ct.enabled ? "checked" : ""}><span class="slider"></span></label>
-        <button type="button" class="icon-btn ct-edit-btn" title="Edit">✏️</button>
-        ${!ct.is_builtin ? '<button type="button" class="icon-btn ct-delete-btn" title="Delete">🗑️</button>' : ""}
+        <button type="button" class="icon-btn ct-edit-btn" title="${t("Edit")}">✏️</button>
+        ${!ct.is_builtin ? `<button type="button" class="icon-btn ct-delete-btn" title="${t("Delete")}">🗑️</button>` : ""}
       </div>`;
     row.querySelector('[data-move="up"]').addEventListener("click", () => moveChoreType(types, i, -1));
     row.querySelector('[data-move="down"]').addEventListener("click", () => moveChoreType(types, i, 1));
@@ -1192,7 +1518,7 @@ async function loadChoreTypesManager() {
     const delBtn = row.querySelector(".ct-delete-btn");
     if (delBtn) {
       delBtn.addEventListener("click", async () => {
-        if (!confirm(`Delete "${ct.label}"? This also deletes all of its logged events.`)) return;
+        if (!confirm(`${t("Delete")} "${t(ct.label)}"? ${t("This also deletes all of its logged events.")}`)) return;
         await api(`/api/chore-types/${ct.key}`, { method: "DELETE" });
         toast("Deleted");
         await loadChoreTypes();
@@ -1466,23 +1792,23 @@ async function loadSettings() {
     const row = document.createElement("div");
     row.className = "settings-row";
     row.innerHTML = `
-      <div>${ct.icon} <strong>${ct.label}</strong></div>
+      <div>${ct.icon} <strong>${t(ct.label)}</strong></div>
       <div class="row">
         ${
           ct.interval_configurable
-            ? `<label>Reminder <input type="number" min="0" class="interval-input" style="width:92px" value="${ct.interval_minutes ?? ""}"> min</label>`
+            ? `<label>${t("Reminder")} <input type="number" min="0" class="interval-input" style="width:92px" value="${ct.interval_minutes ?? ""}"> ${t("min")}</label>`
             : ct.fixed_reminder_note
-              ? `<span style="color:var(--muted)">${ct.fixed_reminder_note}</span>`
-              : '<span style="color:var(--muted)">no reminder</span>'
+              ? `<span style="color:var(--muted)">${t(ct.fixed_reminder_note)}</span>`
+              : `<span style="color:var(--muted)">${t("no reminder")}</span>`
         }
         ${
           ct.session_window_configurable
-            ? `<label>Session window <input type="number" min="0" class="session-window-input" style="width:92px" value="${ct.session_window_minutes ?? ""}"> min</label>`
+            ? `<label>${t("Session window")} <input type="number" min="0" class="session-window-input" style="width:92px" value="${ct.session_window_minutes ?? ""}"> ${t("min")}</label>`
             : ""
         }
         ${
           ct.interval_configurable || ct.session_window_configurable
-            ? '<button class="btn secondary save-settings-btn">Save</button>'
+            ? `<button class="btn secondary save-settings-btn">${t("Save")}</button>`
             : ""
         }
       </div>`;
@@ -1515,6 +1841,20 @@ document.getElementById("modal-backdrop").addEventListener("click", (e) => {
   if (e.target.id === "modal-backdrop") closeModal();
 });
 document.getElementById("stats-back-btn").addEventListener("click", showStatsOverview);
+
+const langSwitcher = document.getElementById("lang-switcher");
+langSwitcher.value = state.lang;
+document.documentElement.lang = state.lang;
+langSwitcher.addEventListener("change", (e) => setLang(e.target.value));
+applyStaticTranslations();
+
+// stats period (days) persists across visits, same as language
+const statsDaysSelect = document.getElementById("stats-days");
+const savedStatsDays = getCookie("bm_stats_days");
+if (savedStatsDays && [...statsDaysSelect.options].some((o) => o.value === savedStatsDays)) {
+  statsDaysSelect.value = savedStatsDays;
+}
+statsDaysSelect.addEventListener("change", () => setCookie("bm_stats_days", statsDaysSelect.value));
 
 initTabs();
 (async function init() {

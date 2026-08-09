@@ -11,6 +11,12 @@ def _parse_ts(value) -> datetime | None:
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
+# every checkpoint method that counts as breast milk toward
+# total_breast_amount_ml - direct nursing (any side) or a bottle of milk
+# pumped in advance, as opposed to "formula"
+BREAST_METHODS = {"breast", "breast_left", "breast_right", "pumped"}
+
+
 @register
 class FeedingChoreType(ChoreType):
     key = "feeding"
@@ -29,12 +35,11 @@ class FeedingChoreType(ChoreType):
             name="entries",
             label="Checkpoints",
             type="entries",
-            help="Add one per switch / top-up as the feeding happens. Weigh before "
-            "and after a breast sub-step (dressed weight is fine - only the "
-            "difference is used) and the amount is calculated automatically - or "
-            "skip weighing and enter Amount directly (e.g. a bottle of previously "
-            "pumped milk). The next sub-step's 'before' is pre-filled from this "
-            "one's 'after'.",
+            help="Add one per switch / top-up as the feeding happens. For direct "
+            "nursing, weigh before and after (dressed weight is fine - only the "
+            "difference is used) and the amount is calculated automatically, with "
+            "the next sub-step's 'before' pre-filled from this one's 'after'. For "
+            "formula or a bottle of milk pumped in advance, just type the Amount.",
             entry_fields=[
                 FieldDef(
                     name="method",
@@ -46,6 +51,7 @@ class FeedingChoreType(ChoreType):
                         FieldOption(value="breast", label="Breast"),
                         FieldOption(value="breast_left", label="Breast (left)"),
                         FieldOption(value="breast_right", label="Breast (right)"),
+                        FieldOption(value="pumped", label="Pumped milk (bottle)"),
                         FieldOption(value="formula", label="Formula"),
                     ],
                 ),
@@ -64,8 +70,8 @@ class FeedingChoreType(ChoreType):
                     type="number",
                     unit="ml",
                     step=5,
-                    help="For formula, or breast milk you already know the amount of "
-                    "(e.g. a bottle of previously pumped milk) - skip weighing and enter it directly.",
+                    help="For formula or pumped milk - skip weighing and enter it directly. "
+                    "Also works as a manual fallback for direct nursing if you'd rather not weigh.",
                 ),
                 FieldDef(name="note", label="Note", type="text"),
             ],
@@ -110,7 +116,7 @@ class FeedingChoreType(ChoreType):
         breast_total = 0.0
         has_breast_amount = False
         for e in entries:
-            if not str(e.get("method", "")).startswith("breast"):
+            if e.get("method") not in BREAST_METHODS:
                 continue
             wb, wa = e.get("weight_before_g"), e.get("weight_after_g")
             amount = None
@@ -150,7 +156,7 @@ class FeedingChoreType(ChoreType):
         entries = data.get("entries") or []
         methods = {e.get("method") for e in entries}
         parts = []
-        if any(m and m.startswith("breast") for m in methods):
+        if methods & BREAST_METHODS:
             tb = data.get("total_breast_amount_ml")
             parts.append("🤱 Breast" + (f" {tb}ml" if tb else ""))
         if "formula" in methods:

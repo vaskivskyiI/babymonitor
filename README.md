@@ -10,16 +10,19 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   "peed during the change" / "pooped during the change".
 - **Feeding**: a feeding is a *session* you build up as it happens. Add as
   many timestamped checkpoints as you like (breast - either side or
-  unspecified - or formula) while the feeding is in progress - switching
-  breasts, topping up with formula, etc. Weigh before and after a breast
-  sub-step (the reading doesn't need to be the baby's real weight -
-  dressed weight on a kitchen/bathroom scale is fine, only the difference
-  matters) and the amount is calculated automatically, with the next
-  sub-step's "weight before" pre-filled from this one's "weight after" -
-  or skip weighing entirely and type the amount directly, e.g. a bottle
-  of previously pumped milk. Each sub-step contributes its own amount
-  (weighed or typed) to the total, so a session can freely mix both.
-  Formula amount is summed separately. The session's own time is always
+  unspecified -, previously pumped milk given from a bottle, or formula)
+  while the feeding is in progress - switching breasts, topping up with
+  formula, etc. Weigh before and after a breast sub-step (the reading
+  doesn't need to be the baby's real weight - dressed weight on a
+  kitchen/bathroom scale is fine, only the difference matters) and the
+  amount is calculated automatically, with the next sub-step's "weight
+  before" pre-filled from this one's "weight after" - or skip weighing
+  entirely and type the amount directly, e.g. a bottle of previously
+  pumped milk (its own "Pumped milk (bottle)" checkpoint type, counted
+  toward the breast-milk total the same as direct nursing). Each
+  sub-step contributes its own amount (weighed or typed) to the total,
+  so a session can freely mix all three. Formula amount is summed
+  separately. The session's own time is always
   the *first* checkpoint's time - there's one clock, not a separate
   "event time" and "first checkpoint time" to keep in sync. The
   dashboard offers quick actions and "+ New" while a feeding is still
@@ -121,6 +124,22 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   field definitions - adding a new chore type requires no frontend
   changes. Built-in types: `diaper`, `feeding`, `sleep`, `pumping`,
   `weight`, `height`, `probiotic`.
+- **Autosave, no Save button**: the log/edit modal saves on every field
+  change (blur for text/number/date, immediately for checkboxes/selects,
+  and on add/remove for checkpoint rows) - creating the event on the
+  first change and updating it in place after that. Close just dismisses
+  the modal; there's nothing to lose by closing early since every change
+  already saved as it happened. Delete only appears once an event has a
+  first save to delete.
+- **Multilingual (English/Ukrainian)**: a language switcher in the
+  topbar covers the dashboard, history, stats, settings, and the
+  log/edit modal - including built-in chore type, field and quick-action
+  labels, and event summaries. Custom chore types you add yourself are
+  shown as-is (whatever language you typed them in). The choice persists
+  in a cookie (`bm_lang`), so it survives reloads and re-visits.
+- **Settings persist in cookies**: language and the Stats period
+  selector (`bm_stats_days`) are remembered across visits via cookies
+  rather than localStorage.
 
 ## Run with Podman
 

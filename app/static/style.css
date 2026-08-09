@@ -435,8 +435,15 @@ textarea { min-height: 3.5rem; resize: vertical; }
 .entry-row .entry-timestamp { flex-basis: 160px; }
 .entry-row .remove-entry { flex: 0 0 auto; }
 
-.form-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; flex-wrap: wrap; }
+.form-actions { display: flex; align-items: center; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; flex-wrap: wrap; }
 .form-actions .btn { flex: 1 1 auto; min-width: 90px; }
+.form-actions .save-status {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+  min-width: 60px;
+}
 @media (max-width: 420px) {
   .form-actions { flex-direction: column-reverse; }
   .form-actions .btn { width: 100%; }
