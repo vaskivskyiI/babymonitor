@@ -24,10 +24,6 @@
     <button class="tab-btn" data-tab="stats" data-i18n="Stats">Stats</button>
     <button class="tab-btn" data-tab="settings" data-i18n="Settings">Settings</button>
   </nav>
-  <select id="lang-switcher" class="lang-switcher">
-    <option value="en">EN</option>
-    <option value="uk">UK</option>
-  </select>
 </header>
 
 <main id="app">
@@ -67,6 +63,13 @@
   </section>
 
   <section id="tab-settings" class="tab-panel">
+    <div class="settings-row">
+      <div><strong data-i18n="Language">Language</strong></div>
+      <select id="lang-switcher" class="lang-switcher">
+        <option value="en">EN</option>
+        <option value="uk">UK</option>
+      </select>
+    </div>
     <div id="profile-box" class="profile-box"></div>
     <div class="section-heading">
       <h2 data-i18n="Chore types">Chore types</h2>

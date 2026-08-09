@@ -26,6 +26,7 @@ function getCookie(name) {
 const I18N = {
   uk: {
     // topbar / tabs
+    "Language": "Мова",
     "Dashboard": "Панель",
     "History": "Історія",
     "Stats": "Статистика",
@@ -887,6 +888,7 @@ function openForm(choreTypeKey, mode, event) {
   html += `<div class="form-actions">
       <button type="button" id="delete-btn" class="btn danger ${currentEventId ? "" : "hidden"}">${t("Delete")}</button>
       <span id="save-status" class="save-status"></span>
+      <button type="button" id="save-btn" class="btn">${t("Save")}</button>
       <button type="button" id="close-modal-btn" class="btn secondary">${t("Close")}</button>
     </div>`;
   form.innerHTML = html;
@@ -898,8 +900,10 @@ function openForm(choreTypeKey, mode, event) {
   const delBtn = document.getElementById("delete-btn");
 
   // Every field change (blur-after-edit for text/number/date, immediate for
-  // checkboxes/selects) saves right away - create on the first change, then
-  // update in place. No Save button; Close just dismisses the modal.
+  // checkboxes/selects) already saves on its own - create on the first
+  // change, then update in place. The Save button just forces an immediate
+  // flush (e.g. of a field that hasn't blurred yet) for reassurance; Close
+  // just dismisses the modal since nothing is ever left unsaved.
   //
   // The form is read (buildEventData) synchronously, right when the change
   // happens - not inside the deferred flush below. #modal-form is reused
@@ -949,6 +953,7 @@ function openForm(choreTypeKey, mode, event) {
   currentDebouncedSave = debouncedSave;
 
   document.getElementById("close-modal-btn").addEventListener("click", closeModal);
+  document.getElementById("save-btn").addEventListener("click", saveNow);
   if (delBtn) delBtn.addEventListener("click", () => deleteEvent(currentEventId));
 
   document.getElementById("modal-backdrop").classList.remove("hidden");

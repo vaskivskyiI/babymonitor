@@ -124,19 +124,19 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   field definitions - adding a new chore type requires no frontend
   changes. Built-in types: `diaper`, `feeding`, `sleep`, `pumping`,
   `weight`, `height`, `probiotic`.
-- **Autosave, no Save button**: the log/edit modal saves on every field
-  change (blur for text/number/date, immediately for checkboxes/selects,
-  and on add/remove for checkpoint rows) - creating the event on the
-  first change and updating it in place after that. Close just dismisses
-  the modal; there's nothing to lose by closing early since every change
-  already saved as it happened. Delete only appears once an event has a
-  first save to delete.
-- **Multilingual (English/Ukrainian)**: a language switcher in the
-  topbar covers the dashboard, history, stats, settings, and the
-  log/edit modal - including built-in chore type, field and quick-action
-  labels, and event summaries. Custom chore types you add yourself are
-  shown as-is (whatever language you typed them in). The choice persists
-  in a cookie (`bm_lang`), so it survives reloads and re-visits.
+- **Autosave**: the log/edit modal saves on every field change (blur for
+  text/number/date, immediately for checkboxes/selects, and on add/remove
+  for checkpoint rows) - creating the event on the first change and
+  updating it in place after that. The Save button is still there for
+  reassurance (forces an immediate flush of anything not yet blurred);
+  Close just dismisses the modal, since nothing is ever left unsaved.
+  Delete only appears once an event has a first save to delete.
+- **Multilingual (English/Ukrainian)**: a language switcher in Settings
+  covers the dashboard, history, stats, settings, and the log/edit modal
+  - including built-in chore type, field and quick-action labels, and
+  event summaries. Custom chore types you add yourself are shown as-is
+  (whatever language you typed them in). The choice persists in a cookie
+  (`bm_lang`), so it survives reloads and re-visits.
 - **Settings persist in cookies**: language and the Stats period
   selector (`bm_stats_days`) are remembered across visits via cookies
   rather than localStorage.
