@@ -538,9 +538,27 @@ async function handleCardAction(choreTypeKey, action, targetEventId) {
   if ((action === "checkpoint" || action === "end") && targetEventId) {
     const event = await api(`/api/events/${targetEventId}`);
     openForm(choreTypeKey, action, event);
+  } else if (action === "new" && targetEventId) {
+    // targetEventId is only set here when there's a still-open session
+    // (within the chore type's session window) - starting a genuinely new
+    // one right on top of it is usually a mis-tap, so confirm first.
+    const ct = choreType(choreTypeKey);
+    if (confirm(sessionConflictMessage(t(ct ? ct.label : choreTypeKey)))) {
+      const event = await api(`/api/events/${targetEventId}`);
+      openForm(choreTypeKey, "checkpoint", event);
+    } else {
+      openForm(choreTypeKey, "create");
+    }
   } else {
     openForm(choreTypeKey, "create");
   }
+}
+
+function sessionConflictMessage(label) {
+  if (state.lang === "uk") {
+    return `Є нещодавній відкритий запис "${label}" - додати контрольну точку до нього замість нового запису?`;
+  }
+  return `There's already a recent "${label}" open - add a checkpoint to it instead of starting a new one?`;
 }
 
 async function editLastEntry(choreTypeKey, eventId) {
@@ -911,6 +929,9 @@ function openForm(choreTypeKey, mode, event) {
   // debounced flush actually runs, the user may already have closed this
   // modal and opened a different one; reading the form lazily at flush time
   // would then read the *other* modal's fields under this one's chore type.
+  // Resolves to true/false (never rejects) so callers - e.g. the Save
+  // button, which should only close the modal once the save actually
+  // succeeded - can tell a failed save apart from a completed one.
   const flushSave = (payload) => {
     autosaveChain = autosaveChain.then(async () => {
       setSaveStatus("Saving…");
@@ -927,9 +948,11 @@ function openForm(choreTypeKey, mode, event) {
         }
         setSaveStatus("Saved");
         refreshCurrentView();
+        return true;
       } catch (err) {
         setSaveStatus("");
         toast("Error: " + err.message);
+        return false;
       }
     });
     return autosaveChain;
@@ -953,7 +976,10 @@ function openForm(choreTypeKey, mode, event) {
   currentDebouncedSave = debouncedSave;
 
   document.getElementById("close-modal-btn").addEventListener("click", closeModal);
-  document.getElementById("save-btn").addEventListener("click", saveNow);
+  document.getElementById("save-btn").addEventListener("click", async () => {
+    const ok = await saveNow();
+    if (ok) closeModal();
+  });
   if (delBtn) delBtn.addEventListener("click", () => deleteEvent(currentEventId));
 
   document.getElementById("modal-backdrop").classList.remove("hidden");
