@@ -9,12 +9,17 @@ class EventCreate(BaseModel):
     timestamp: Optional[datetime] = None
     data: dict[str, Any] = {}
     notes: Optional[str] = None
+    person_id: Optional[int] = None
 
 
 class EventUpdate(BaseModel):
     timestamp: Optional[datetime] = None
     data: Optional[dict[str, Any]] = None
     notes: Optional[str] = None
+    person_id: Optional[int] = None
+    # person_id is nullable, so "clear the person" and "field wasn't sent"
+    # both look like `person_id=None` - only re-assign it when the client
+    # actually included the key (checked via model_fields_set in the route).
 
 
 class EventOut(BaseModel):
@@ -28,6 +33,26 @@ class EventOut(BaseModel):
     data: dict[str, Any]
     notes: Optional[str] = None
     summary: str = ""
+    person_id: Optional[int] = None
+    person_name: Optional[str] = None
+
+
+class PersonCreate(BaseModel):
+    name: str
+    color: Optional[str] = None
+
+
+class PersonUpdate(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+
+
+class PersonOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    color: Optional[str] = None
 
 
 class SettingsUpdate(BaseModel):
@@ -99,12 +124,14 @@ class ReorderRequest(BaseModel):
 
 class QuickActionCreate(BaseModel):
     label: str
-    mode: str  # "increment" | "absolute"
+    mode: str  # "increment" | "absolute" | "log"
     entries_field: str = "entries"
     match_field: str
     match_value: str
-    target_field: str
-    value: float
+    # unused for mode="log" (always just appends a new entry stamped with
+    # match_field=match_value, e.g. "start a breastfeeding checkpoint now")
+    target_field: Optional[str] = None
+    value: Optional[float] = None
 
 
 class QuickActionUpdate(BaseModel):

@@ -8,7 +8,7 @@ from fastapi.templating import Jinja2Templates
 from app.api import router as api_router
 from app.chore_types.base import REGISTRY, load_builtin_types
 from app.db import SessionLocal, init_db
-from app.models import ChoreTypeMeta
+from app.models import ChoreTypeMeta, QuickActionDef
 
 load_builtin_types()
 
@@ -39,10 +39,49 @@ def _seed_chore_type_order() -> None:
         db.close()
 
 
+def _seed_feeding_quick_actions() -> None:
+    """One-tap "Breast" / "Formula" / "Pumped" buttons on the feeding card -
+    each just appends a new checkpoint entry stamped with that method (mode
+    "log": no target field/value, unlike the increment/absolute quick
+    actions a user can configure themselves). Seeded once; if the user later
+    deletes or edits them, an empty table for feeding means "no quick
+    actions", not "reseed" - only seed when there are truly none yet."""
+    if "feeding" not in REGISTRY:
+        return
+    db = SessionLocal()
+    try:
+        has_any = db.query(QuickActionDef).filter(QuickActionDef.chore_type_key == "feeding").count()
+        if has_any:
+            return
+        defaults = [
+            ("🤱 Breast", "breast"),
+            ("🍼 Formula", "formula"),
+            ("🍶 Pumped", "pumped"),
+        ]
+        for i, (label, method) in enumerate(defaults):
+            db.add(
+                QuickActionDef(
+                    chore_type_key="feeding",
+                    label=label,
+                    mode="log",
+                    entries_field="entries",
+                    match_field="method",
+                    match_value=method,
+                    target_field="",
+                    value=0.0,
+                    sort_order=i,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 def on_startup():
     init_db()
     _seed_chore_type_order()
+    _seed_feeding_quick_actions()
 
 
 @app.get("/", response_class=HTMLResponse)

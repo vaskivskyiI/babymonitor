@@ -140,6 +140,30 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
 - **Settings persist in cookies**: language and the Stats period
   selector (`bm_stats_days`) are remembered across visits via cookies
   rather than localStorage.
+- **Per-person tracking**: add people in Settings (e.g. "Mom"/"Dad"), and
+  set which one *this device* usually logs as - every quick action and new
+  event defaults to that person, with a dropdown in the log/edit modal to
+  pick someone else for a one-off. The device's choice is a cookie
+  (`bm_person_id`), not tied to any account. Deleting a person unassigns
+  their past events rather than deleting them.
+- **Competition tab**: per-person leaderboards for every chore type over a
+  selectable period (24h through all-time) - event counts plus each
+  numeric_stat field that's a real total (pee/poop counts, ml fed, etc;
+  point-in-time readings like weight are correctly left out of the
+  ranking, since summing weigh-ins across a period isn't meaningful).
+- **Instant sleep start/end**: "Start Sleep" / "End Sleep" log immediately
+  at the current time with no popup, since that's almost always what's
+  meant. A "+" next to it opens the regular modal instead, for logging a
+  nap that already happened at a specific time.
+- **Feeding one-tap checkpoints**: "🤱 Breast" / "🍼 Formula" / "🍶 Pumped"
+  buttons on the feeding card start (or append to the open session) a
+  checkpoint stamped with that method and the current time, no popup - fill
+  in the amount later the same way as any other quick-logged entry.
+- **Line charts, not bars**: Stats charts are date-scaled line traces
+  rendered at a fixed native pixel size (never squeezed to fit the
+  container) - a long period scrolls horizontally instead of shrinking
+  text down to unreadable, which is what a bar chart stretched to "100%"
+  width used to do over 90+ days.
 
 ## Run with Podman
 
@@ -392,14 +416,16 @@ done in the app's Settings tab.
 - `PUT /api/chore-types/{key}/meta` - rename/re-icon/enable/disable any chore type (built-in or custom)
 - `POST /api/chore-types/reorder` - `{keys: [...]}` in the desired display order
 - `DELETE /api/chore-types/{key}` - delete a custom chore type and its events (built-ins can only be disabled)
-- `POST /api/chore-types/{key}/quick-actions` / `PUT .../{action_id}` / `DELETE .../{action_id}` - manage configurable quick actions (`{label, mode: "increment"|"absolute", match_field, match_value, target_field, value}`) for entries-based chore types
+- `POST /api/chore-types/{key}/quick-actions` / `PUT .../{action_id}` / `DELETE .../{action_id}` - manage configurable quick actions for entries-based chore types: `{label, mode: "increment"|"absolute"|"log", match_field, match_value, target_field?, value?}` - mode `"log"` (target_field/value unused) just appends a new checkpoint stamped `match_field: match_value`, e.g. feeding's default Breast/Formula/Pumped buttons
 - `PUT /api/chore-types/{key}/settings` - set reminder interval / session window (minutes)
 - `GET /api/profile` / `PUT /api/profile` (partial updates supported) - baby's name, birth date, birth weight, timezone (auto-synced from the browser; drives age display and day-bucketing)
-- `POST /api/events` - log an event `{chore_type, timestamp?, data, notes?}`
+- `GET /api/people` / `POST /api/people` / `PUT /api/people/{id}` / `DELETE /api/people/{id}` - manage household members events can be attributed to; deleting one unassigns (not deletes) their past events
+- `POST /api/events` - log an event `{chore_type, timestamp?, data, notes?, person_id?}`
 - `GET /api/events?chore_type=&since=&until=&limit=` - list events
 - `GET/PUT/DELETE /api/events/{id}` - fetch/edit/delete a single event
 - `GET /api/status` / `GET /api/status/{key}` - last event, next due time, active session id, `open_event_id` (for start/end types like sleep), and today's totals per numeric field
 - `GET /api/stats/{key}?days=90` or `?all_time=true` - daily aggregation for charts (zero-filled for every calendar day in range), incl. `age_days`, `<field>_ref_min`/`_ref_max` reference-range bands where available, and `growth_rate`/`trend`/`ideal` for `weight`
+- `GET /api/competition?days=30` or `?all_time=true` - per-person totals/event-counts for every chore type in the period, for the Competition tab
 - `GET /api/calculators/feeding?age_days=&weight_g=` - suggested feeding amounts/interval for an age (defaults to the profile's age and latest weight if omitted)
 
 Interactive OpenAPI docs are available at `/docs`.

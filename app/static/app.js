@@ -30,6 +30,7 @@ const I18N = {
     "Dashboard": "Панель",
     "History": "Історія",
     "Stats": "Статистика",
+    "Competition": "Змагання",
     "Settings": "Налаштування",
     // dashboard
     "No events yet": "Ще немає записів",
@@ -65,6 +66,15 @@ const I18N = {
     "Time": "Час",
     "Delete this event?": "Видалити цей запис?",
     "Deleted": "Видалено",
+    "Person": "Особа",
+    "Unassigned": "Не призначено",
+    "People": "Люди",
+    "Add person": "Додати людину",
+    "This device belongs to": "Цей пристрій належить",
+    "Their logged events stay, just unassigned.": "Записані події залишаться, просто без прив'язки.",
+    "Events": "Подій",
+    "Add people in Settings to compare stats.": "Додайте людей у Налаштуваннях, щоб порівнювати статистику.",
+    "Edit exact time": "Змінити точний час",
     // chore type labels
     "Diaper Change": "Зміна підгузка",
     "Feeding": "Годування",
@@ -217,6 +227,7 @@ function setLang(lang) {
   const activeTab = document.querySelector(".tab-btn.active").dataset.tab;
   if (activeTab === "history") loadHistory();
   if (activeTab === "settings") loadSettings();
+  if (activeTab === "competition") loadCompetition();
   if (activeTab === "stats") {
     const detailVisible = !document.getElementById("stats-detail").classList.contains("hidden");
     if (detailVisible) loadStats();
@@ -240,7 +251,25 @@ const state = {
   currentEdit: null, // {mode: 'create'|'edit', choreType, eventId}
   profile: null,
   lang: getCookie("bm_lang") || detectDefaultLang(),
+  people: [],
 };
+
+// This device's default person (cookie, not server-side - each device/
+// browser remembers who's usually logging from it). null = unassigned.
+function currentPersonId() {
+  const raw = getCookie("bm_person_id");
+  return raw ? Number(raw) : null;
+}
+
+function setCurrentPersonId(id) {
+  if (id == null || id === "") setCookie("bm_person_id", "");
+  else setCookie("bm_person_id", String(id));
+}
+
+function personName(id) {
+  const p = state.people.find((p) => p.id === id);
+  return p ? p.name : null;
+}
 
 // ---------- helpers ----------
 
@@ -326,6 +355,7 @@ function initTabs() {
       document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
       if (btn.dataset.tab === "history") loadHistory();
       if (btn.dataset.tab === "stats") showStatsOverview();
+      if (btn.dataset.tab === "competition") loadCompetition();
       if (btn.dataset.tab === "settings") loadSettings();
     });
   });
@@ -454,11 +484,20 @@ async function loadDashboard() {
     let buttonsHtml;
     let targetEventId = null;
     if (ct && ct.has_start_end) {
+      // Primary button is instant (no popup) since start/end almost always
+      // just means "right now"; the "+" opens the modal for a specific
+      // time instead (e.g. logging a nap that already happened).
       if (s.open_event_id) {
         targetEventId = s.open_event_id;
-        buttonsHtml = `<button class="quick-btn end-btn" data-action="end">⏰ ${t("End")} ${t(ct.label)}</button>`;
+        buttonsHtml = `<div class="quick-actions-row">
+            <button class="quick-btn end-btn" data-action="quick-end">⏰ ${t("End")} ${t(ct.label)}</button>
+            <button class="icon-btn more-btn" data-action="end" title="${t("Edit exact time")}">+</button>
+          </div>`;
       } else {
-        buttonsHtml = `<button class="quick-btn" data-action="start">${ct.icon} ${t("Start")} ${t(ct.label)}</button>`;
+        buttonsHtml = `<div class="quick-actions-row">
+            <button class="quick-btn" data-action="quick-start">${ct.icon} ${t("Start")} ${t(ct.label)}</button>
+            <button class="icon-btn more-btn" data-action="start" title="${t("Edit exact time")}">+</button>
+          </div>`;
       }
     } else if (ct && ct.quick_actions && ct.quick_actions.length) {
       // one-tap presets - logged/updated instantly, no form. Field-targeting
@@ -513,7 +552,7 @@ async function loadDashboard() {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         const qa = ct.quick_actions[Number(btn.dataset.quick)];
-        if (qa.mode === "increment" || qa.mode === "absolute") {
+        if (qa.mode === "increment" || qa.mode === "absolute" || qa.mode === "log") {
           runFieldQuickAction(s.chore_type, qa, s);
         } else {
           logQuickAction(s.chore_type, qa);
@@ -535,7 +574,11 @@ async function loadDashboard() {
 }
 
 async function handleCardAction(choreTypeKey, action, targetEventId) {
-  if ((action === "checkpoint" || action === "end") && targetEventId) {
+  if (action === "quick-start") {
+    await quickStart(choreTypeKey);
+  } else if (action === "quick-end" && targetEventId) {
+    await quickEnd(targetEventId);
+  } else if ((action === "checkpoint" || action === "end") && targetEventId) {
     const event = await api(`/api/events/${targetEventId}`);
     openForm(choreTypeKey, action, event);
   } else if (action === "new" && targetEventId) {
@@ -570,7 +613,7 @@ async function logQuickAction(choreTypeKey, qa) {
   try {
     await api("/api/events", {
       method: "POST",
-      body: JSON.stringify({ chore_type: choreTypeKey, data: qa.data }),
+      body: JSON.stringify({ chore_type: choreTypeKey, data: qa.data, person_id: currentPersonId() }),
     });
     toast(qa.label + " logged");
     refreshCurrentView();
@@ -579,28 +622,64 @@ async function logQuickAction(choreTypeKey, qa) {
   }
 }
 
-// Configurable quick action targeting an `entries` field, e.g. "Formula
-// +10ml" (mode: increment) or "Formula 100ml" (mode: absolute). Applies to
-// the last entry matching match_field/match_value within the currently
-// open session (if any), or starts a new one-entry event otherwise - so
-// repeated taps build up the same checkpoint instead of creating one each.
+// Instant start/end for has_start_end types (sleep, ...) - no popup, since
+// "right now" is almost always what's meant. The dashboard's "+" button is
+// the escape hatch for a specific time via the regular modal instead.
+async function quickStart(choreTypeKey) {
+  try {
+    await api("/api/events", {
+      method: "POST",
+      body: JSON.stringify({ chore_type: choreTypeKey, data: {}, person_id: currentPersonId() }),
+    });
+    refreshCurrentView();
+  } catch (err) {
+    toast("Error: " + err.message);
+  }
+}
+
+async function quickEnd(eventId) {
+  try {
+    const event = await api(`/api/events/${eventId}`);
+    await api(`/api/events/${eventId}`, {
+      method: "PUT",
+      body: JSON.stringify({ data: { ...event.data, ended_at: new Date().toISOString() } }),
+    });
+    refreshCurrentView();
+  } catch (err) {
+    toast("Error: " + err.message);
+  }
+}
+
+// Configurable quick action targeting an `entries` field: "Formula +10ml"
+// (mode: increment) or "Formula 100ml" (mode: absolute) apply to the last
+// entry matching match_field/match_value within the currently open session
+// (if any), or start a new one-entry event otherwise - so repeated taps
+// build up the same checkpoint instead of creating one each. Mode "log"
+// (e.g. feeding's Breast/Formula/Pumped buttons) is simpler: always just
+// appends a fresh checkpoint stamped with match_field=match_value, no
+// amount - the same "log now, fill in the rest later" pattern as anywhere
+// else in the app, just one tap instead of opening the modal.
 async function runFieldQuickAction(choreTypeKey, qa, status) {
   try {
     const sessionEventId = status.active_session_event_id || status.open_event_id;
     const event = sessionEventId ? await api(`/api/events/${sessionEventId}`) : null;
     const entries = event ? [...(event.data[qa.entries_field] || [])] : [];
-    let idx = -1;
-    for (let i = entries.length - 1; i >= 0; i--) {
-      if (entries[i][qa.match_field] === qa.match_value) {
-        idx = i;
-        break;
-      }
-    }
-    if (idx >= 0) {
-      const cur = Number(entries[idx][qa.target_field]) || 0;
-      entries[idx] = { ...entries[idx], [qa.target_field]: qa.mode === "increment" ? cur + qa.value : qa.value };
+    if (qa.mode === "log") {
+      entries.push({ timestamp: new Date().toISOString(), [qa.match_field]: qa.match_value });
     } else {
-      entries.push({ timestamp: new Date().toISOString(), [qa.match_field]: qa.match_value, [qa.target_field]: qa.value });
+      let idx = -1;
+      for (let i = entries.length - 1; i >= 0; i--) {
+        if (entries[i][qa.match_field] === qa.match_value) {
+          idx = i;
+          break;
+        }
+      }
+      if (idx >= 0) {
+        const cur = Number(entries[idx][qa.target_field]) || 0;
+        entries[idx] = { ...entries[idx], [qa.target_field]: qa.mode === "increment" ? cur + qa.value : qa.value };
+      } else {
+        entries.push({ timestamp: new Date().toISOString(), [qa.match_field]: qa.match_value, [qa.target_field]: qa.value });
+      }
     }
     // PUT replaces the whole `data` object, so merge onto the event's
     // existing data (e.g. a typed note) instead of dropping everything else.
@@ -608,7 +687,10 @@ async function runFieldQuickAction(choreTypeKey, qa, status) {
     if (event) {
       await api(`/api/events/${event.id}`, { method: "PUT", body: JSON.stringify({ data }) });
     } else {
-      await api("/api/events", { method: "POST", body: JSON.stringify({ chore_type: choreTypeKey, data }) });
+      await api("/api/events", {
+        method: "POST",
+        body: JSON.stringify({ chore_type: choreTypeKey, data, person_id: currentPersonId() }),
+      });
     }
     toast(qa.label);
     refreshCurrentView();
@@ -851,7 +933,9 @@ function buildEventData(ct, form) {
   // from the first checkpoint (see ChoreType.event_timestamp).
   const timestampField = form.querySelector("#f_timestamp");
   const timestamp = timestampField ? fromLocalInputValue(timestampField.value) : undefined;
-  return { timestamp, data };
+  const personField = form.querySelector("#f_person");
+  const person_id = personField && personField.value !== "" ? Number(personField.value) : null;
+  return { timestamp, data, person_id };
 }
 
 // autosaveChain serializes saves across the whole app (only one modal is
@@ -896,7 +980,14 @@ function openForm(choreTypeKey, mode, event) {
   // the first checkpoint - showing a separate top-level "Time" here would
   // just be a second, independently-editable clock for the same moment.
   const hasEntries = editableFields.some((f) => f.type === "entries");
-  let html = hasEntries
+  let html = `<div class="field">
+      <label for="f_person">${t("Person")}</label>
+      <select id="f_person" name="person_id">
+        <option value="">${t("Unassigned")}</option>
+        ${state.people.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}
+      </select>
+    </div>`;
+  html += hasEntries
     ? ""
     : `<div class="field">
       <label for="f_timestamp">${t("Time")}</label>
@@ -914,6 +1005,10 @@ function openForm(choreTypeKey, mode, event) {
 
   const timestampInput = form.querySelector("#f_timestamp");
   if (timestampInput) timestampInput.value = toLocalInputValue(event ? event.timestamp : new Date());
+
+  const personInput = form.querySelector("#f_person");
+  const defaultPersonId = event && event.person_id != null ? event.person_id : currentPersonId();
+  if (personInput && defaultPersonId != null) personInput.value = String(defaultPersonId);
 
   const delBtn = document.getElementById("delete-btn");
 
@@ -983,10 +1078,6 @@ function openForm(choreTypeKey, mode, event) {
   if (delBtn) delBtn.addEventListener("click", () => deleteEvent(currentEventId));
 
   document.getElementById("modal-backdrop").classList.remove("hidden");
-
-  // "End sleep" prefills ended_at programmatically (no user interaction
-  // required) - save it immediately rather than waiting for a field touch.
-  if (mode === "end") saveNow();
 }
 
 function closeModal() {
@@ -1044,7 +1135,7 @@ async function loadHistory() {
     const d = new Date(ev.timestamp);
     item.innerHTML = `
       <div>
-        <div><strong>${ct.icon} ${tSummary(ev.summary)}</strong></div>
+        <div><strong>${ct.icon} ${tSummary(ev.summary)}</strong>${ev.person_name ? ` <span class="person-pill">${ev.person_name}</span>` : ""}</div>
         <div class="meta">${d.toLocaleString(state.lang === "uk" ? "uk-UA" : undefined)}${ev.notes ? " · " + ev.notes : ""}</div>
       </div>
       <div class="actions">
@@ -1065,55 +1156,79 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // ---------- stats ----------
 
+// Date-scaled line chart (x-position reflects actual calendar gaps, not
+// evenly-spaced slots - matters for series like weight-gain-rate where
+// points land on irregular weigh-in dates, not one-per-day). Rendered at a
+// fixed *native* pixel width - never "100%" - so text stays a constant,
+// legible size regardless of how many days are plotted; a long period
+// scrolls horizontally (the .chart-block wrapper is overflow-x:auto)
+// instead of squeezing everything down to fit, which is what made stats
+// text unreadably small over long periods with the old bar chart.
 // points: [{date, value, refMin?, refMax?, ageDays?}]
-function svgBarChart(points, color) {
-  const w = Math.max(320, points.length * 44);
+function svgSeriesChart(points, color) {
   const h = 180;
+  const padTop = 16;
   const padBottom = 34;
-  const padTop = 14;
-  const plotH = h - padBottom - padTop;
+  const padLeft = 10;
+  const padRight = 10;
+  const plotH = h - padTop - padBottom;
+
+  const plotted = points.filter((p) => p.value != null);
+  const dayMs = 86400000;
+  const minDate = points[0].date;
+  const maxDate = points[points.length - 1].date;
+  const spanDays = Math.max(1, (new Date(maxDate) - new Date(minDate)) / dayMs);
+  const pxPerDay = points.length <= 14 ? 34 : points.length <= 60 ? 16 : 9;
+  const w = Math.max(340, spanDays * pxPerDay + padLeft + padRight);
+  const plotW = w - padLeft - padRight;
+
   const refVals = points.flatMap((p) => [p.refMin, p.refMax]).filter((v) => v != null);
-  const max = Math.max(1, ...points.map((p) => p.value || 0), ...refVals);
-  const slotW = w / points.length;
-  const barW = slotW * 0.55;
+  const vals = plotted.map((p) => p.value).concat(refVals);
+  const max = Math.max(1, ...vals);
+  const xFor = (dateStr) => padLeft + ((new Date(dateStr) - new Date(minDate)) / dayMs / spanDays) * plotW;
   const yFor = (v) => padTop + plotH - (v / max) * plotH;
 
   let band = "";
   if (refVals.length) {
-    // draw the reference band as a step area across the plotted days
-    let top = "";
-    let bottom = "";
-    points.forEach((p, i) => {
-      const x0 = slotW * i;
-      const x1 = slotW * (i + 1);
-      if (p.refMin == null || p.refMax == null) return;
-      top += `L${x0},${yFor(p.refMax)} L${x1},${yFor(p.refMax)} `;
-      bottom = `L${x1},${yFor(p.refMin)} L${x0},${yFor(p.refMin)} ` + bottom;
-    });
-    if (top) {
-      band = `<path d="M0,0 ${top}${bottom}Z" fill="var(--ok)" opacity="0.15"></path>`;
-    }
+    const top = points
+      .filter((p) => p.refMax != null)
+      .map((p, i) => `${i === 0 ? "M" : "L"}${xFor(p.date).toFixed(1)},${yFor(p.refMax).toFixed(1)}`)
+      .join(" ");
+    const bottom = [...points]
+      .reverse()
+      .filter((p) => p.refMin != null)
+      .map((p) => `L${xFor(p.date).toFixed(1)},${yFor(p.refMin).toFixed(1)}`)
+      .join(" ");
+    if (top) band = `<path d="${top} ${bottom} Z" fill="var(--ok)" opacity="0.15"></path>`;
   }
 
-  let bars = "";
+  let line = "";
+  if (plotted.length) {
+    const path = plotted
+      .map((p, i) => `${i === 0 ? "M" : "L"}${xFor(p.date).toFixed(1)},${yFor(p.value).toFixed(1)}`)
+      .join(" ");
+    line = `<path d="${path}" fill="none" stroke="${color}" stroke-width="2"></path>`;
+    // dots + value labels get crowded past ~40 points - past that, the line
+    // shape alone carries the trend and only first/last stay labeled
+    const showAll = plotted.length <= 40;
+    plotted.forEach((p, i) => {
+      const isEdge = i === 0 || i === plotted.length - 1;
+      if (!showAll && !isEdge) return;
+      line += `<circle cx="${xFor(p.date).toFixed(1)}" cy="${yFor(p.value).toFixed(1)}" r="2.5" fill="${color}"></circle>`;
+      line += `<text x="${xFor(p.date).toFixed(1)}" y="${yFor(p.value) - 6}" font-size="10" text-anchor="middle" fill="currentColor">${p.value}</text>`;
+    });
+  }
+
+  // x-axis date labels (sparse, ~6-8 ticks regardless of point density)
+  const tickCount = Math.min(8, points.length - 1 || 1);
   let labels = "";
-  points.forEach((p, i) => {
-    const x = slotW * i + (slotW - barW) / 2;
-    const val = p.value;
-    if (val != null) {
-      const barH = (val / max) * plotH;
-      const y = padTop + plotH - barH;
-      bars += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(barH, val ? 2 : 0)}" rx="3" fill="${color}"></rect>`;
-      bars += `<text x="${x + barW / 2}" y="${y - 4}" font-size="10" text-anchor="middle" fill="currentColor">${val}</text>`;
-    }
-    const dateLabel = p.date.slice(5);
-    const ageLabel = p.ageDays != null ? `d${p.ageDays}` : "";
-    labels += `<text x="${x + barW / 2}" y="${h - 20}" font-size="9" text-anchor="middle" fill="currentColor" opacity="0.6">${dateLabel}</text>`;
-    if (ageLabel) {
-      labels += `<text x="${x + barW / 2}" y="${h - 8}" font-size="9" text-anchor="middle" fill="currentColor" opacity="0.45">${ageLabel}</text>`;
-    }
-  });
-  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="color:inherit">${band}${bars}${labels}</svg>`;
+  for (let i = 0; i <= tickCount; i++) {
+    const dt = new Date(new Date(minDate).getTime() + (spanDays * dayMs * i) / tickCount);
+    const dstr = dt.toISOString().slice(0, 10);
+    labels += `<text x="${xFor(dstr).toFixed(1)}" y="${h - 8}" font-size="9" text-anchor="middle" fill="currentColor" opacity="0.6">${dstr.slice(5)}</text>`;
+  }
+
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="color:inherit">${band}${line}${labels}</svg>`;
 }
 
 // True date-proportional line chart (x-position reflects actual calendar
@@ -1127,7 +1242,9 @@ function svgLineChart({ actual = [], trend = [], idealLow = [], idealHigh = [], 
   const dayMs = 86400000;
   const spanDays = Math.max(1, (new Date(maxDate) - new Date(minDate)) / dayMs);
 
-  const w = Math.max(360, Math.min(spanDays * 14, 1400));
+  // fixed native pixel width (never capped/squeezed to the container) so
+  // text stays legible over long spans - see svgSeriesChart for why.
+  const w = Math.max(360, spanDays * (spanDays <= 60 ? 14 : 6));
   const h = 200;
   const padTop = 16;
   const padBottom = 28;
@@ -1206,7 +1323,7 @@ function svgLineChart({ actual = [], trend = [], idealLow = [], idealHigh = [], 
     todayLine = `<line x1="${xFor(todayStr)}" y1="${padTop}" x2="${xFor(todayStr)}" y2="${h - padBottom}" stroke="currentColor" stroke-width="1" stroke-dasharray="2 3" opacity="0.35"></line>`;
   }
 
-  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" style="color:inherit">${svg}${todayLine}${labels}</svg>`;
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="color:inherit">${svg}${todayLine}${labels}</svg>`;
 }
 
 // ---------- stats: at-a-glance overview ----------
@@ -1235,6 +1352,69 @@ function svgSparkline(points, color) {
       <path d="${path}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke"></path>
       ${dot}
     </svg>`;
+}
+
+// ---------- competition (per-person stats) ----------
+
+async function loadCompetition() {
+  const box = document.getElementById("competition-content");
+  box.innerHTML = `<p class="muted-note">${t("Loading…")}</p>`;
+  const days = document.getElementById("competition-days").value;
+  const query = days === "all" ? "all_time=true" : `days=${days}`;
+  const data = await api(`/api/competition?${query}`);
+
+  if (!data.people.length) {
+    box.innerHTML = `<p class="muted-note">${t("Add people in Settings to compare stats.")}</p>`;
+    return;
+  }
+  if (!data.chore_types.length) {
+    box.innerHTML = `<p class="muted-note">${t("No data for this period.")}</p>`;
+    return;
+  }
+
+  const peopleById = {};
+  data.people.forEach((p) => (peopleById[p.id] = p));
+  const bucketLabel = (bucket) => (bucket === "unassigned" ? t("Unassigned") : peopleById[bucket]?.name || bucket);
+
+  // one ranked bar-row per bucket (person or "unassigned"), sorted highest
+  // first, zero entries dropped entirely - nothing to compete over there
+  function metricHtml(label, unit, valuesByBucket) {
+    const entries = Object.entries(valuesByBucket).filter(([, v]) => v);
+    if (!entries.length) return "";
+    entries.sort((a, b) => b[1] - a[1]);
+    const max = entries[0][1];
+    const rows = entries
+      .map(([bucket, val], i) => {
+        const display = Number.isInteger(val) ? val : Math.round(val * 10) / 10;
+        return `<div class="comp-row">
+            <span class="comp-name">${i === 0 ? "🏆 " : ""}${bucketLabel(bucket)}</span>
+            <div class="comp-bar-track"><div class="comp-bar" style="width:${(val / max) * 100}%"></div></div>
+            <span class="comp-val">${display}${unit || ""}</span>
+          </div>`;
+      })
+      .join("");
+    return `<div class="comp-metric"><div class="comp-metric-label">${label}</div>${rows}</div>`;
+  }
+
+  box.innerHTML = data.chore_types
+    .map((ct) => {
+      const countsHtml = metricHtml(t("Events"), "", ct.counts);
+      const fieldsHtml = ct.fields
+        .map((f) =>
+          metricHtml(
+            t(f.label),
+            f.unit || "",
+            Object.fromEntries(Object.entries(ct.totals).map(([bucket, vals]) => [bucket, vals[f.name] || 0]))
+          )
+        )
+        .join("");
+      return `<div class="comp-card">
+          <div class="comp-card-head">${ct.icon} ${t(ct.label)}</div>
+          ${countsHtml}
+          ${fieldsHtml}
+        </div>`;
+    })
+    .join("");
 }
 
 async function showStatsOverview() {
@@ -1337,7 +1517,7 @@ async function loadStats(explicitKey) {
   const statCt = choreType(key);
   let html = "";
   if (data.days.length) {
-    html += `<div class="chart-block"><h3>${t("Events per day")}</h3>${svgBarChart(
+    html += `<div class="chart-block"><h3>${t("Events per day")}</h3>${svgSeriesChart(
       data.days.map((d) => ({ date: d.date, value: d.count, ageDays: d.age_days })),
       "var(--primary)"
     )}</div>`;
@@ -1357,7 +1537,7 @@ async function loadStats(explicitKey) {
         : null;
       const fieldDef = statCt && statCt.fields.find((x) => x.name === f);
       const heading = fieldDef ? t(fieldDef.label) : f.replace(/_/g, " ");
-      html += `<div class="chart-block"><h3>${heading}</h3>${svgBarChart(points, "var(--ok)")}${refFooter(refMeta)}</div>`;
+      html += `<div class="chart-block"><h3>${heading}</h3>${svgSeriesChart(points, "var(--ok)")}${refFooter(refMeta)}</div>`;
     });
   }
 
@@ -1387,7 +1567,7 @@ async function loadStats(explicitKey) {
     }));
     const refEntry = data.growth_rate.find((r) => r.ref_source_label);
     const refMeta = refEntry ? { source_label: refEntry.ref_source_label, source_url: refEntry.ref_source_url } : null;
-    html += `<div class="chart-block"><h3>${t("Weight gain (g/day, between weigh-ins)")}</h3>${svgBarChart(points, "var(--primary)")}${refFooter(refMeta)}</div>`;
+    html += `<div class="chart-block"><h3>${t("Weight gain (g/day, between weigh-ins)")}</h3>${svgSeriesChart(points, "var(--primary)")}${refFooter(refMeta)}</div>`;
   }
 
   charts.innerHTML = html;
@@ -1812,10 +1992,83 @@ document.getElementById("ct-modal-backdrop").addEventListener("click", (e) => {
   if (e.target.id === "ct-modal-backdrop") closeChoreTypeModal();
 });
 
+// ---------- people ----------
+
+async function loadPeopleSettings() {
+  const box = document.getElementById("people-manager");
+  box.innerHTML = "";
+
+  state.people.forEach((p) => {
+    const row = document.createElement("div");
+    row.className = "person-row";
+    row.innerHTML = `
+      <input type="text" class="person-name-input" value="${p.name}">
+      <button type="button" class="icon-btn person-delete-btn" title="${t("Delete")}">🗑️</button>
+    `;
+    const input = row.querySelector(".person-name-input");
+    input.addEventListener("change", async () => {
+      const name = input.value.trim();
+      if (!name) {
+        input.value = p.name;
+        return;
+      }
+      await api(`/api/people/${p.id}`, { method: "PUT", body: JSON.stringify({ name }) });
+      await loadPeople();
+    });
+    row.querySelector(".person-delete-btn").addEventListener("click", async () => {
+      if (!confirm(`${t("Delete")} "${p.name}"? ${t("Their logged events stay, just unassigned.")}`)) return;
+      await api(`/api/people/${p.id}`, { method: "DELETE" });
+      await loadPeople();
+      loadPeopleSettings();
+    });
+    box.appendChild(row);
+  });
+
+  const addRow = document.createElement("div");
+  addRow.className = "row";
+  addRow.innerHTML = `
+    <input type="text" id="new-person-name" placeholder="${t("Add person")}">
+    <button type="button" class="btn secondary" id="add-person-btn">${t("+ Add")}</button>
+  `;
+  box.appendChild(addRow);
+  const nameInput = document.getElementById("new-person-name");
+  const addPerson = async () => {
+    const name = nameInput.value.trim();
+    if (!name) return;
+    await api("/api/people", { method: "POST", body: JSON.stringify({ name }) });
+    await loadPeople();
+    loadPeopleSettings();
+  };
+  document.getElementById("add-person-btn").addEventListener("click", addPerson);
+  nameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addPerson();
+    }
+  });
+
+  const deviceRow = document.createElement("div");
+  deviceRow.className = "settings-row";
+  deviceRow.innerHTML = `
+    <div>${t("This device belongs to")}</div>
+    <select id="device-person-select">
+      <option value="">${t("Unassigned")}</option>
+      ${state.people.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}
+    </select>
+  `;
+  box.appendChild(deviceRow);
+  const devSelect = deviceRow.querySelector("#device-person-select");
+  const cur = currentPersonId();
+  if (cur != null) devSelect.value = String(cur);
+  devSelect.addEventListener("change", () => setCurrentPersonId(devSelect.value));
+}
+
 // ---------- settings ----------
 
 async function loadSettings() {
   await loadProfile();
+  await loadPeople();
+  loadPeopleSettings();
   await loadChoreTypesManager();
   const list = document.getElementById("settings-list");
   list.innerHTML = "";
@@ -1887,9 +2140,23 @@ if (savedStatsDays && [...statsDaysSelect.options].some((o) => o.value === saved
 }
 statsDaysSelect.addEventListener("change", () => setCookie("bm_stats_days", statsDaysSelect.value));
 
+const competitionDaysSelect = document.getElementById("competition-days");
+const savedCompetitionDays = getCookie("bm_competition_days");
+if (savedCompetitionDays && [...competitionDaysSelect.options].some((o) => o.value === savedCompetitionDays)) {
+  competitionDaysSelect.value = savedCompetitionDays;
+}
+competitionDaysSelect.addEventListener("change", () => {
+  setCookie("bm_competition_days", competitionDaysSelect.value);
+  loadCompetition();
+});
+
+async function loadPeople() {
+  state.people = await api("/api/people");
+}
+
 initTabs();
 (async function init() {
-  await loadChoreTypes();
+  await Promise.all([loadChoreTypes(), loadPeople()]);
   await loadDashboard();
   setInterval(loadDashboard, 30000);
 })();

@@ -11,7 +11,7 @@ from app.chore_types.base import REGISTRY, ChoreType, FieldDef, FieldOption
 from app.custom_types import DynamicChoreType
 from app.db import get_db
 from app.feeding_guidance import feeding_guidance
-from app.models import ChoreTypeMeta, CustomChoreType, Event, QuickActionDef, Setting, as_utc
+from app.models import ChoreTypeMeta, CustomChoreType, Event, Person, QuickActionDef, Setting, as_utc
 from app.reference_ranges import reference_range
 from app.schemas import (
     ChoreTypeMetaUpdate,
@@ -20,6 +20,9 @@ from app.schemas import (
     EventCreate,
     EventOut,
     EventUpdate,
+    PersonCreate,
+    PersonOut,
+    PersonUpdate,
     ProfileOut,
     ProfileUpdate,
     QuickActionCreate,
@@ -128,13 +131,62 @@ def _set_setting(db: Session, key: str, value: dict) -> None:
     setting.value = value
 
 
-def _event_out(ct, event: Event) -> EventOut:
+def _event_out(ct, event: Event, db: Session | None = None) -> EventOut:
     event.timestamp = as_utc(event.timestamp)
     event.created_at = as_utc(event.created_at)
     event.updated_at = as_utc(event.updated_at)
     out = EventOut.model_validate(event)
     out.summary = ct.summarize(event.data)
+    if db is not None and event.person_id is not None:
+        person = db.get(Person, event.person_id)
+        out.person_name = person.name if person else None
     return out
+
+
+# ---------- people ----------
+
+
+@router.get("/people", response_model=list[PersonOut])
+def list_people(db: Session = Depends(get_db)):
+    return db.execute(select(Person).order_by(Person.sort_order, Person.id)).scalars().all()
+
+
+@router.post("/people", response_model=PersonOut)
+def create_person(body: PersonCreate, db: Session = Depends(get_db)):
+    max_order = db.execute(select(Person)).scalars().all()
+    next_order = (max((p.sort_order for p in max_order), default=-1)) + 1
+    row = Person(name=body.name.strip(), color=body.color, sort_order=next_order)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.put("/people/{person_id}", response_model=PersonOut)
+def update_person(person_id: int, body: PersonUpdate, db: Session = Depends(get_db)):
+    row = db.get(Person, person_id)
+    if row is None:
+        raise HTTPException(404, "Person not found")
+    if body.name is not None:
+        row.name = body.name.strip()
+    if "color" in body.model_fields_set:
+        row.color = body.color
+    db.commit()
+    return row
+
+
+@router.delete("/people/{person_id}")
+def delete_person(person_id: int, db: Session = Depends(get_db)):
+    row = db.get(Person, person_id)
+    if row is None:
+        raise HTTPException(404, "Person not found")
+    # events keep their history - just drop the attribution rather than
+    # deleting logged chores when a person is removed
+    for e in db.execute(select(Event).where(Event.person_id == person_id)).scalars().all():
+        e.person_id = None
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
 
 
 # ---------- profile (baby's birth date / name / timezone) ----------
@@ -256,7 +308,15 @@ def create_quick_action(key: str, body: QuickActionCreate, db: Session = Depends
         select(QuickActionDef).where(QuickActionDef.chore_type_key == key)
     ).scalars().all()
     next_order = (max((r.sort_order for r in max_order), default=-1)) + 1
-    row = QuickActionDef(chore_type_key=key, sort_order=next_order, **body.model_dump())
+    values = body.model_dump()
+    # mode="log" (just append a new checkpoint entry) has no target field/
+    # value - the DB columns stay NOT NULL for the increment/absolute modes,
+    # so store harmless sentinels rather than migrating column nullability.
+    if values.get("target_field") is None:
+        values["target_field"] = ""
+    if values.get("value") is None:
+        values["value"] = 0.0
+    row = QuickActionDef(chore_type_key=key, sort_order=next_order, **values)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -396,11 +456,12 @@ def create_event(body: EventCreate, db: Session = Depends(get_db)):
         timestamp=timestamp,
         data=data,
         notes=body.notes,
+        person_id=body.person_id,
     )
     db.add(event)
     db.commit()
     db.refresh(event)
-    return _event_out(ct, event)
+    return _event_out(ct, event, db)
 
 
 @router.get("/events", response_model=list[EventOut])
@@ -419,7 +480,7 @@ def list_events(
     if until:
         stmt = stmt.where(Event.timestamp <= until)
     events = db.execute(stmt).scalars().all()
-    return [_event_out(_get_chore_type(e.chore_type, db), e) for e in events]
+    return [_event_out(_get_chore_type(e.chore_type, db), e, db) for e in events]
 
 
 @router.get("/events/{event_id}", response_model=EventOut)
@@ -427,7 +488,7 @@ def get_event(event_id: int, db: Session = Depends(get_db)):
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(404, "Event not found")
-    return _event_out(_get_chore_type(event.chore_type, db), event)
+    return _event_out(_get_chore_type(event.chore_type, db), event, db)
 
 
 @router.put("/events/{event_id}", response_model=EventOut)
@@ -443,9 +504,11 @@ def update_event(event_id: int, body: EventUpdate, db: Session = Depends(get_db)
         event.timestamp = ct.event_timestamp(event.data, as_utc(event.timestamp))
     if body.notes is not None:
         event.notes = body.notes
+    if "person_id" in body.model_fields_set:
+        event.person_id = body.person_id
     db.commit()
     db.refresh(event)
-    return _event_out(ct, event)
+    return _event_out(ct, event, db)
 
 
 @router.delete("/events/{event_id}")
@@ -488,7 +551,7 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
     )
     last = db.execute(stmt).scalars().first()
     interval = _interval_minutes(db, ct)
-    last_out = _event_out(ct, last) if last else None
+    last_out = _event_out(ct, last, db) if last else None
     next_due = ct.next_due(last_out.timestamp if last_out else None, interval, tz)
     overdue = bool(next_due and next_due < _now())
 
@@ -551,6 +614,55 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
 def status_all(db: Session = Depends(get_db)):
     tz = _profile_timezone(_get_profile_dict(db))
     return [_status_for(ct, db, tz) for ct in _effective_chore_types(db, enabled_only=True)]
+
+
+# ---------- competition (per-person stats) ----------
+
+
+@router.get("/competition")
+def competition(days: int = Query(30, le=3650), all_time: bool = False, db: Session = Depends(get_db)):
+    since = None if all_time else _now() - timedelta(days=days)
+    people = db.execute(select(Person).order_by(Person.sort_order, Person.id)).scalars().all()
+
+    chore_type_results = []
+    for ct in _effective_chore_types(db, enabled_only=True):
+        stmt = select(Event).where(Event.chore_type == ct.key)
+        if since is not None:
+            stmt = stmt.where(Event.timestamp >= since)
+        events = db.execute(stmt).scalars().all()
+        if not events:
+            continue  # skip chore types with no activity in the period - less noise
+
+        # "last"-aggregated fields (e.g. weight_g, height_cm) are point-in-
+        # time readings, not something to sum - summing several weight
+        # readings across a period is meaningless. Competition is about
+        # totals/counts, so only sum-aggregated numeric fields qualify.
+        numeric_fields_defs = [f for f in ct.numeric_fields() if f.stat_agg == "sum"]
+        counts: dict[str, int] = defaultdict(int)
+        totals: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        for e in events:
+            bucket = str(e.person_id) if e.person_id is not None else "unassigned"
+            counts[bucket] += 1
+            for f in numeric_fields_defs:
+                val = e.data.get(f.name)
+                # bool is a subclass of int in Python, so True/False already
+                # contribute 1/0 here - no separate boolean-counting branch
+                if isinstance(val, (int, float)):
+                    totals[bucket][f.name] += val
+
+        chore_type_results.append({
+            "key": ct.key,
+            "label": ct.label,
+            "icon": ct.icon,
+            "fields": [{"name": f.name, "label": f.label, "unit": f.unit} for f in numeric_fields_defs],
+            "counts": dict(counts),
+            "totals": {bucket: dict(vals) for bucket, vals in totals.items()},
+        })
+
+    return {
+        "people": [{"id": p.id, "name": p.name, "color": p.color} for p in people],
+        "chore_types": chore_type_results,
+    }
 
 
 @router.get("/status/{key}", response_model=StatusOut)

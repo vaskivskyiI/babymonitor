@@ -16,12 +16,14 @@ class DiaperChoreType(ChoreType):
             label="Peed during the change",
             type="boolean",
             help="Baby peed while the diaper was off",
+            numeric_stat=True,
         ),
         FieldDef(
             name="pooped_during_change",
             label="Pooped during the change",
             type="boolean",
             help="Baby pooped while the diaper was off",
+            numeric_stat=True,
         ),
         FieldDef(name="notes", label="Notes", type="textarea"),
     ]
