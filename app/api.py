@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.chore_types.base import REGISTRY, ChoreType, FieldDef, FieldOption
@@ -12,7 +12,14 @@ from app.custom_types import DynamicChoreType
 from app.db import get_db
 from app.feeding_guidance import feeding_guidance
 from app.models import ChoreTypeMeta, CustomChoreType, Event, Person, QuickActionDef, Setting, as_utc
-from app.reference_ranges import reference_range
+from app.reference_ranges import (
+    growth_band,
+    growth_field,
+    growth_value_at_z,
+    growth_z,
+    reference_range,
+    z_to_percentile,
+)
 from app.schemas import (
     ChoreTypeMetaUpdate,
     CustomChoreTypeCreate,
@@ -264,6 +271,7 @@ def get_profile(db: Session = Depends(get_db)):
         name=profile.get("name"),
         birth_date=date.fromisoformat(profile["birth_date"]) if profile.get("birth_date") else None,
         birth_weight_g=profile.get("birth_weight_g"),
+        sex=profile.get("sex"),
         timezone=profile.get("timezone") or "UTC",
         age_days=age,
     )
@@ -281,6 +289,10 @@ def update_profile(body: ProfileUpdate, db: Session = Depends(get_db)):
         value["birth_weight_g"] = body.birth_weight_g
     if "timezone" in fields_set:
         value["timezone"] = body.timezone or "UTC"
+    if "sex" in fields_set:
+        if body.sex not in (None, "", "boy", "girl"):
+            raise HTTPException(400, "sex must be 'boy', 'girl' or empty")
+        value["sex"] = body.sex or None
     _set_setting(db, PROFILE_KEY, value)
     db.commit()
     return get_profile(db)
@@ -747,40 +759,127 @@ def status_one(key: str, db: Session = Depends(get_db)):
     return _status_for(ct, db, tz)
 
 
+STATS_LOOKBACK_DAYS = 30  # history always loaded, so a short view window still has data to forecast from
+LAST_FIELD_LOOKBACK_DAYS = 120  # point-in-time readings (weight/height) are sparse - look further back
+FORECAST_RECENT_DAYS = 7  # per-day metrics are forecast as the mean of this many recent full days
+
+
+def _age_on(profile: dict, d: date) -> int | None:
+    bd = profile.get("birth_date")
+    return (d - date.fromisoformat(bd)).days if bd else None
+
+
+def _linear_forecast(readings: list[tuple[date, float]], last_date: date) -> list[dict]:
+    """Least-squares line through recent readings, continued to `last_date`.
+    The fallback for point-in-time fields with no growth standard (or no
+    birth date to look one up with)."""
+    if len(readings) < 2:
+        return []
+    x0 = readings[0][0]
+    xs = [(d - x0).days for d, _ in readings]
+    ys = [v for _, v in readings]
+    n = len(xs)
+    mean_x, mean_y = sum(xs) / n, sum(ys) / n
+    denom = sum((x - mean_x) ** 2 for x in xs)
+    if denom == 0:
+        return []
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / denom
+    intercept = mean_y - slope * mean_x
+    start = readings[-1][0]
+    return [
+        {"date": (start + timedelta(days=k)).isoformat(),
+         "value": round(max(0.0, intercept + slope * ((start - x0).days + k)), 1)}
+        for k in range((last_date - start).days + 1)
+    ]
+
+
+def _growth_forecast(
+    ct_key: str, field, profile: dict, sex: str | None, reading: tuple[date, float], last_date: date
+) -> list[dict] | None:
+    """Where the baby will be if they keep tracking along the same WHO growth
+    curve as at the last reading: same z-score if sex is known, otherwise the
+    same relative position within the (both-sex) band. None if there's no
+    standard for this field or no birth date."""
+    growth = growth_field(ct_key, field.name)
+    if not growth or not profile.get("birth_date"):
+        return None
+    metric, factor, decimals = growth
+    r_date, r_val = reading
+    age0 = _age_on(profile, r_date)
+    if age0 is None or age0 < 0:
+        return None
+    kg = r_val / factor
+    z = growth_z(metric, age0, sex, kg)
+    band0 = growth_band(metric, age0, sex)
+    if band0 is None:
+        return None
+    pos = (kg - band0[0]) / (band0[2] - band0[0]) if band0[2] > band0[0] else 0.5
+
+    points = []
+    for k in range((last_date - r_date).days + 1):
+        d = r_date + timedelta(days=k)
+        age = age0 + k
+        if z is not None:
+            v = growth_value_at_z(metric, age, sex, z)
+        else:
+            band = growth_band(metric, age, None)
+            v = band[0] + pos * (band[2] - band[0]) if band else None
+        if v is None:
+            break  # ran past the end of the WHO tables (5 years)
+        points.append({"date": d.isoformat(), "value": round(v * factor, decimals)})
+    return points
+
+
 @router.get("/stats/{key}")
 def stats(
     key: str,
     days: int = Query(90, le=3650),
     all_time: bool = False,
+    forecast_days: int = Query(0, ge=0, le=730),
     db: Session = Depends(get_db),
 ):
+    """Per-day aggregation for charts, zero-filled for every calendar day.
+    Each day carries the healthy range for the baby's age at that date
+    (`<field>_ref_min/_ref_max[/_ref_mid]`), including days in the future when
+    `forecast_days` > 0 (those have `future: true` and no values). Today is
+    flagged `partial: true` - it isn't finished, so it shouldn't be judged.
+    With a forecast horizon, `forecast[<field>]` is a projection of each metric."""
     ct = _get_chore_type(key, db)
     profile = _get_profile_dict(db)
     tz = _profile_timezone(profile)
+    sex = profile.get("sex")
+    now = _now()
+    today = now.astimezone(tz).date()
+
     if all_time:
         first_stmt = (
             select(Event).where(Event.chore_type == ct.key).order_by(Event.timestamp.asc()).limit(1)
         )
         first = db.execute(first_stmt).scalars().first()
-        since = as_utc(first.timestamp) if first else _now()
+        since = as_utc(first.timestamp) if first else now
     else:
-        since = _now() - timedelta(days=days)
+        since = now - timedelta(days=days)
+
+    numeric_fields_defs = ct.numeric_fields()
+    has_last_field = any(f.stat_agg == "last" for f in numeric_fields_defs)
+    lookback = LAST_FIELD_LOOKBACK_DAYS if has_last_field else STATS_LOOKBACK_DAYS
+    history_start = min(since, now - timedelta(days=lookback))
+
     stmt = (
         select(Event)
-        .where(Event.chore_type == ct.key, Event.timestamp >= since)
+        .where(Event.chore_type == ct.key, Event.timestamp >= history_start)
         .order_by(Event.timestamp.asc())
     )
     events = db.execute(stmt).scalars().all()
     for e in events:
         e.timestamp = as_utc(e.timestamp)
+    in_range = [e for e in events if e.timestamp >= since]
 
-    numeric_fields_defs = ct.numeric_fields()
     numeric_fields = [f.name for f in numeric_fields_defs]
     daily_counts: dict[str, int] = defaultdict(int)
     daily_values: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     intervals_minutes: list[float] = []
 
-    prev_ts = None
     for e in events:
         # events belong to the day they *started* - except chore types with
         # a real duration that can cross midnight (sleep), whose split
@@ -803,51 +902,145 @@ def stats(
             if isinstance(val, (int, float)):
                 daily_values[day][f.name].append(val)
 
-        if prev_ts is not None:
-            intervals_minutes.append((e.timestamp - prev_ts).total_seconds() / 60)
-        prev_ts = e.timestamp
+    for prev, cur in zip(in_range, in_range[1:]):
+        intervals_minutes.append((cur.timestamp - prev.timestamp).total_seconds() / 60)
 
     # zero-fill every calendar day in the window (not just days with events)
-    # so charts have a true continuous date axis
-    start_date = since.astimezone(tz).date()
-    end_date = _now().astimezone(tz).date()
-    days_list = [
-        (start_date + timedelta(days=i)).isoformat() for i in range((end_date - start_date).days + 1)
-    ]
-    avg_interval = sum(intervals_minutes) / len(intervals_minutes) if intervals_minutes else None
+    # so charts have a true continuous date axis, then run on into the future
+    # if a forecast was asked for
+    hist_start_date = history_start.astimezone(tz).date()
+    since_date = since.astimezone(tz).date()
+    # nothing to show before the baby was born, or before this chore was first
+    # logged - a long period would otherwise open with months of blank axis
+    floor = profile.get("birth_date")
+    if floor:
+        since_date = max(since_date, date.fromisoformat(floor))
+    first_ts = db.execute(select(func.min(Event.timestamp)).where(Event.chore_type == ct.key)).scalar()
+    if first_ts is not None:
+        since_date = max(since_date, as_utc(first_ts).astimezone(tz).date())
+    since_date = min(since_date, today)
+    last_date = today + timedelta(days=forecast_days)
+    references: dict[str, dict] = {}
 
-    day_dicts = []
-    for d in days_list:
-        day_age = _age_days(profile, datetime.fromisoformat(d).replace(tzinfo=tz))
-        entry = {"date": d, "count": daily_counts[d]}
-        if day_age is not None:
-            entry["age_days"] = day_age
+    def add_ref(entry: dict, name: str, age: int | None) -> None:
+        ref = reference_range(ct.key, name, age, sex)
+        if not ref:
+            return
+        entry[f"{name}_ref_min"] = ref["min"]
+        entry[f"{name}_ref_max"] = ref["max"]
+        if "mid" in ref:
+            entry[f"{name}_ref_mid"] = ref["mid"]
+        references.setdefault(
+            name, {"source_label": ref.get("source_label"), "source_url": ref.get("source_url")}
+        )
+
+    entries = []
+    for i in range((last_date - hist_start_date).days + 1):
+        d = hist_start_date + timedelta(days=i)
+        ds = d.isoformat()
+        age = _age_on(profile, d)
+        is_future = d > today
+        entry: dict = {"date": ds, "count": None if is_future else daily_counts[ds]}
+        if age is not None:
+            entry["age_days"] = age
+        if is_future:
+            entry["future"] = True
+        elif d == today:
+            entry["partial"] = True
         for f in numeric_fields_defs:
-            agg = _agg_value(f, daily_values[d][f.name])
-            entry[f.name] = round(agg, 1) if agg is not None else None
-            ref = reference_range(ct.key, f.name, day_age)
-            if ref:
-                entry[f"{f.name}_ref_min"] = ref["min"]
-                entry[f"{f.name}_ref_max"] = ref["max"]
-                entry[f"{f.name}_ref_source_label"] = ref.get("source_label")
-                entry[f"{f.name}_ref_source_url"] = ref.get("source_url")
-        day_dicts.append(entry)
+            if is_future:
+                entry[f.name] = None
+            else:
+                agg = _agg_value(f, daily_values[ds][f.name])
+                entry[f.name] = round(agg, 1) if agg is not None else None
+            add_ref(entry, f.name, age)
+        add_ref(entry, "count", age)
+        entries.append(entry)
 
-    extra = ct.stats_extra(events, tz, profile)
+    forecast: dict[str, list[dict]] = {}
+    if forecast_days > 0 and events:
+        first_event_date = events[0].timestamp.astimezone(tz).date().isoformat()
+        complete = [e for e in entries if not e.get("future") and not e.get("partial")]
+        recent = [e for e in complete[-FORECAST_RECENT_DAYS:] if e["date"] >= first_event_date]
+        ahead = [e["date"] for e in entries if e.get("future")]
+
+        def flat(name: str, values: list[float]) -> None:
+            # "if things carry on as lately": the recent mean, from today on
+            if len(values) >= 2:
+                mean = round(sum(values) / len(values), 1)
+                forecast[name] = [{"date": today.isoformat(), "value": mean}] + [
+                    {"date": ds, "value": mean} for ds in ahead
+                ]
+
+        flat("count", [e["count"] for e in recent])
+        for f in numeric_fields_defs:
+            if f.stat_agg == "last":
+                readings = [
+                    (date.fromisoformat(e["date"]), e[f.name])
+                    for e in complete
+                    if e[f.name] is not None
+                ]
+                if not readings:
+                    continue
+                points = _growth_forecast(ct.key, f, profile, sex, readings[-1], last_date)
+                if points is None:
+                    cutoff = today - timedelta(days=30)
+                    points = _linear_forecast([r for r in readings if r[0] >= cutoff], last_date)
+                if points:
+                    forecast[f.name] = [p for p in points if p["date"] >= since_date.isoformat()]
+            else:
+                flat(f.name, [e[f.name] for e in recent if e[f.name] is not None])
+
+    # latest point-in-time reading with its WHO percentile (needs sex + birth date)
+    latest: dict[str, dict] = {}
+    for f in numeric_fields_defs:
+        if f.stat_agg != "last":
+            continue
+        reading = next(
+            ((e["date"], e[f.name]) for e in reversed(entries) if not e.get("future") and e[f.name] is not None),
+            None,
+        )
+        if not reading:
+            continue
+        info = {"date": reading[0], "value": reading[1]}
+        growth = growth_field(ct.key, f.name)
+        age = _age_on(profile, date.fromisoformat(reading[0]))
+        if growth and age is not None:
+            metric, factor, _ = growth
+            z = growth_z(metric, age, sex, reading[1] / factor)
+            if z is not None:
+                info["z"] = round(z, 2)
+                info["percentile"] = round(z_to_percentile(z), 1)
+        latest[f.name] = info
+
+    day_dicts = [e for e in entries if e["date"] >= since_date.isoformat()]
+
+    extra = ct.stats_extra(in_range, tz, profile)
     for rate in extra.get("growth_rate", []):
         age = _age_days(profile, datetime.fromisoformat(rate["timestamp"]).astimezone(tz))
-        ref = reference_range(ct.key, "gain_g_per_day", age)
+        ref = reference_range(ct.key, "gain_g_per_day", age, sex)
         if ref:
             rate["ref_min"] = ref["min"]
             rate["ref_max"] = ref["max"]
             rate["ref_source_label"] = ref.get("source_label")
             rate["ref_source_url"] = ref.get("source_url")
 
+    avg_interval = sum(intervals_minutes) / len(intervals_minutes) if intervals_minutes else None
     return {
         "chore_type": ct.key,
         "days": day_dicts,
         "numeric_fields": numeric_fields,
-        "total_events": len(events),
+        "total_events": len(in_range),
         "avg_interval_minutes": round(avg_interval, 1) if avg_interval else None,
+        "today": today.isoformat(),
+        "age_days": _age_on(profile, today),
+        "sex": sex,
+        # whether *any* healthy-range guidance exists for this chore type, so
+        # the UI can ask for a birth date when it's the only thing missing
+        "has_guidance": any(reference_range(ct.key, n, 30, sex) for n in ["count", *numeric_fields]),
+        "forecast_days": forecast_days,
+        "forecast": forecast,
+        "references": references,
+        "latest": latest,
         **extra,
     }

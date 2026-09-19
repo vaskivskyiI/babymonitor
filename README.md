@@ -103,10 +103,10 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   chore types - built-in or custom - can be renamed, re-ordered
   (▲/▼), and hidden without deleting their history; only custom ones can
   be deleted outright.
-- **Feeding calculator**: on the Stats tab, suggested amount per
-  feed/day, feeds per day, and interval between feeds for the baby's
-  current age (and a weight-based formula estimate if a recent weight is
-  on record) - editable to try other ages/weights.
+- **Feeding calculator**: at the bottom of the Feeding stats, suggested
+  amount per feed/day, feeds per day, and interval between feeds for the
+  baby's current age (and a weight-based formula estimate if a recent
+  weight is on record) - editable to try other ages/weights.
 - **Installable as an app (PWA)**: add it to your phone's home screen
   (Safari: Share → Add to Home Screen; Chrome: menu → Install app) for a
   full-screen, app-like experience with an icon - no app store needed.
@@ -116,15 +116,22 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   or run a quick action from an automation. See
   [Home Assistant custom integration](#home-assistant-custom-integration-hacs)
   below.
-- **Baby profile**: set a birth date (+ name) in Settings. Once set, the
-  dashboard shows the baby's age and stats charts are labeled with
-  age-in-days alongside the date. Timezone is detected automatically
-  from the browser/device (no manual entry) and kept in sync, driving
-  "today" totals and day-bucketing.
-- **Normal-range guidance**: wet/poopy diaper counts per day and weight
-  gain (g/day) charts are shown against a shaded band for commonly-cited
-  pediatric ranges (by the baby's age), with a source link. This is
-  general guidance only, not medical advice - see
+- **Baby profile**: set a birth date (+ name, birth weight, and sex) in
+  Settings. Once set, the dashboard shows the baby's age, and everything on
+  the Stats tab is compared against the healthy range for the baby's age on
+  each date. Sex only sharpens the WHO growth curves (boy/girl are
+  different) and enables an exact percentile; leave it unset and the band
+  simply spans both. Timezone is detected automatically from the
+  browser/device (no manual entry) and kept in sync, driving "today"
+  totals and day-bucketing.
+- **Healthy ranges on every chart**: each Stats chart shades the
+  commonly-cited healthy range for the baby's age, day by day, with a source
+  link: **weight** and **height** against the WHO growth standards
+  (-2 to +2 SD, roughly the 3rd-97th percentile), **food per day** and
+  **feeds per day**, **sleep per day**, **wet/poopy diapers per day**, and
+  **weight gain** between weigh-ins. Points outside their range are
+  highlighted, and the Stats page says how many of the last 7 days were in
+  range. This is general guidance only, not medical advice - see
   [Reference ranges used](#reference-ranges-used) below.
 - Every event's timestamp defaults to "now" but is fully editable.
 - Dashboard shows time since last event, time until the next one is due
@@ -134,15 +141,27 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
 - History view to browse/edit/delete past events, always sorted
   chronologically by event time regardless of the order they were
   entered in (so backdating one doesn't leave it out of place).
-- **Stats**: an at-a-glance overview grid (one card per chore type, each
-  with a sparkline and its latest/key number over all recorded history)
-  is the default landing view - tap a card to drill into full detail
-  charts (event counts, amounts, average interval, total food/day) with
-  a period selector defaulting to a long range (90 days; also
-  24h/7d/14d/30d/1y/all time). The weight chart is date-scaled (not just
-  evenly-spaced buckets) and shows a linear-regression trend extrapolated
-  a bit into the future alongside an "ideal" age-based growth band
-  (anchored at birth weight if set).
+- **Stats**: an at-a-glance overview (one card per chore type) shows
+  yesterday's value - or the latest weight/height with its WHO percentile -
+  next to its healthy range with a ✓ / ▲ / ▼ flag and a sparkline over the
+  band. Tap a card for the detail page:
+  - **chips** to switch chore type, **period** (24h ... 1y / all) and
+    **forecast** horizon (off, +1 week ... +1 year) - no dropdowns;
+  - an **at-a-glance** block per metric (7-day average, the healthy range,
+    "5 of 7 days in range", WHO percentile);
+  - **charts** with a fixed y-axis beside a horizontally scrolling plot,
+    the healthy band, and today marked (today is shown as a hollow point
+    "so far" - it's unfinished, so it isn't judged). Hover or tap any day
+    for its exact value, age and healthy range;
+  - **forecast**: with a horizon selected, the charts run on into the
+    future. The healthy band continues (it's a function of the baby's age),
+    and a dashed line projects your own numbers - per-day metrics assume
+    the last 7 days continue, while weight and height keep tracking the same
+    WHO percentile as the latest reading (or a straight line through recent
+    readings if there's no birth date). A **Healthy ranges ahead** table
+    lists the ranges, and where the forecast lands, a few dates out.
+  A period never opens on blank axis: it starts at birth or at the first
+  logged event, whichever is later.
 - **Fully modular**: chore types are plugins under `app/chore_types/`.
   The frontend renders forms and charts generically from each type's
   field definitions - adding a new chore type requires no frontend
@@ -161,9 +180,9 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   event summaries. Custom chore types you add yourself are shown as-is
   (whatever language you typed them in). The choice persists in a cookie
   (`bm_lang`), so it survives reloads and re-visits.
-- **Settings persist in cookies**: language and the Stats period
-  selector (`bm_stats_days`) are remembered across visits via cookies
-  rather than localStorage.
+- **Settings persist in cookies**: language and the Stats period and
+  forecast selectors (`bm_stats_days`, `bm_stats_forecast`) are remembered
+  across visits via cookies rather than localStorage.
 - **Per-person tracking**: add people in Settings (e.g. "Mom"/"Dad"), and
   set which one *this device* usually logs as - every quick action and new
   event defaults to that person, with a dropdown in the log/edit modal to
@@ -444,13 +463,13 @@ done in the app's Settings tab.
 - `PUT /api/chore-types/{key}/settings` - partial update of `{interval_minutes?, session_window_minutes?, reminder_enabled?}`; only the fields you send change
 - `PUT /api/chore-types/{key}/next-due` - `{due_at}` overrides the next reminder time for the current cycle only (`null` clears it); reverts once the next event is logged. `GET /api/status` reports `next_due_overridden` and `reminder_enabled` (`next_due` is `null` while a reminder is off)
 - `GET /api/push/config` (VAPID public key), `POST /api/push/subscribe` / `POST /api/push/unsubscribe` / `POST /api/push/state` / `PUT /api/push/preferences` `{endpoint, muted_types?, lang?}` / `POST /api/push/test` - Web Push device registration and per-device chore choices
-- `GET /api/profile` / `PUT /api/profile` (partial updates supported) - baby's name, birth date, birth weight, timezone (auto-synced from the browser; drives age display and day-bucketing)
+- `GET /api/profile` / `PUT /api/profile` (partial updates supported) - baby's name, birth date, birth weight, sex (`"boy"`/`"girl"`/null - selects the WHO growth curves), timezone (auto-synced from the browser; drives age display and day-bucketing)
 - `GET /api/people` / `POST /api/people` / `PUT /api/people/{id}` / `DELETE /api/people/{id}` - manage household members events can be attributed to; deleting one unassigns (not deletes) their past events
 - `POST /api/events` - log an event `{chore_type, timestamp?, data, notes?, person_id?}`
 - `GET /api/events?chore_type=&since=&until=&limit=` - list events
 - `GET/PUT/DELETE /api/events/{id}` - fetch/edit/delete a single event
 - `GET /api/status` / `GET /api/status/{key}` - last event, next due time, active session id, `open_event_id` (for start/end types like sleep), and today's totals per numeric field
-- `GET /api/stats/{key}?days=90` or `?all_time=true` - daily aggregation for charts (zero-filled for every calendar day in range), incl. `age_days`, `<field>_ref_min`/`_ref_max` reference-range bands where available, and `growth_rate`/`trend`/`ideal` for `weight`
+- `GET /api/stats/{key}?days=90&forecast_days=0` (or `all_time=true`) - daily aggregation for charts, zero-filled for every calendar day from birth / the first logged event. Each day has `count`, one value per numeric field, `age_days`, and the healthy range for that date as `<field>_ref_min` / `_ref_max` (plus `_ref_mid` for WHO curves); `count` covers events per day (feeds/day for `feeding`). Today is flagged `partial: true`. With `forecast_days` > 0 the list runs on into the future (`future: true`, ranges only) and `forecast` holds a projection per metric. Also: `references` (source label/url per metric), `latest` (last weight/height reading with `percentile`/`z` when the profile has a sex), `has_guidance`, and `growth_rate` for `weight`
 - `GET /api/competition?days=30` or `?all_time=true` - per-person totals/event-counts for every chore type in the period, for the Competition tab
 - `GET /api/calculators/feeding?age_days=&weight_g=` - suggested feeding amounts/interval for an age (defaults to the profile's age and latest weight if omitted)
 
@@ -458,21 +477,39 @@ Interactive OpenAPI docs are available at `/docs`.
 
 ## Reference ranges used
 
-The wet/poopy-diaper-per-day and weight-gain-per-day bands shown on the
-Stats charts come from commonly-cited pediatric guidance, keyed to the
-baby's age (via the birth date set in Settings):
+Every band on the Stats charts comes from commonly-cited pediatric
+guidance, keyed to the baby's age in days (via the birth date set in
+Settings) and interpolated day by day:
 
-- Wet diapers/day: day 1: 1-2, days 2-3: 2-4, day 4: 4-6, day 5+: 6-8
+- **Weight and height**: the [WHO Child Growth Standards](https://www.who.int/tools/child-growth-standards/standards)
+  (weight-for-age and length/height-for-age, birth to 5 years), shown as
+  -2 to +2 standard deviations (roughly the 3rd-97th percentile) with the
+  median as a dotted line. The full LMS tables live in
+  `app/growth_data.py`, generated from WHO's official spreadsheets by
+  `scripts/gen_growth_data.py`; percentiles are computed from them
+  exactly. WHO curves differ by sex, so without one set in Settings the
+  band is the envelope of both. A reading inside the band isn't a
+  diagnosis and one outside it isn't either - the *trend* across visits
+  matters more, so weigh on the same scale and check with your pediatrician.
+- **Wet diapers/day**: day 1: 1-2, days 2-3: 2-4, day 4: 4-6, day 5+: 6-8
   ([AAP / HealthyChildren.org](https://www.healthychildren.org/English/ages-stages/baby/diapers-clothing/Pages/default.aspx)).
-- Poopy diapers/day: roughly 1-4/day in the first month (breastfed
+- **Poopy diapers/day**: roughly 1-4/day in the first month (breastfed
   babies are often at the higher end, formula-fed at the lower end);
   after ~6 weeks frequency can drop a lot and still be normal
   ([AAP - Pooping By the Numbers](https://www.healthychildren.org/English/ages-stages/baby/Pages/Pooping-By-the-Numbers.aspx)).
-- Weight gain: ~20-40 g/day at 0-3 months, ~15-25 g/day at 3-6 months,
+- **Weight gain**: ~20-40 g/day at 0-3 months, ~15-25 g/day at 3-6 months,
   ~7-15 g/day at 6-12 months
   ([WHO weight-for-age guidance, via Mayo Clinic](https://www.mayoclinic.org/healthy-lifestyle/infant-and-toddler-health/expert-answers/infant-growth/faq-20058037)).
+- **Sleep per day** (naps included): 14-17 h up to ~4 months, 12-16 h at
+  4-12 months, 11-14 h at 1-2 years, 10-13 h at 3-5 years
+  ([AASM/AAP consensus, Paruthi 2016](https://jcsm.aasm.org/doi/10.5664/jcsm.5866);
+  the 0-3 month figure is the National Sleep Foundation's).
+- **Food per day and feeds per day**: from the age-based feeding
+  guidance below. Note the food band only means something if amounts are
+  actually logged (weighed feeds, bottles) - un-weighed breastfeeds read
+  as "low".
 
-The feeding calculator (Stats tab) uses separate age-based guidance for
+The feeding calculator (Stats tab) uses the same age-based guidance for
 amount per feed/day, feeds per day, and interval - see
 [Pampers' AAP-based feeding chart](https://www.pampers.com/en-us/baby/feeding/article/baby-feeding-schedule)
 and [KellyMom's milk-intake-by-age guide](https://kellymom.com/bf/pumpingmoms/pumping/milkcalc/),
@@ -483,7 +520,8 @@ These are rough guides for a full-term, otherwise-healthy baby, **not
 medical advice** - every baby is different, and you should talk to your
 pediatrician about anything specific to yours. The source and this
 disclaimer are shown next to each chart. To adjust or add ranges, edit
-`app/reference_ranges.py`.
+`app/reference_ranges.py`. Forecasts are extrapolations of recent numbers,
+not predictions of growth.
 
 ## Adding a new chore type
 

@@ -184,6 +184,54 @@ const I18N = {
     "Push notifications need HTTPS (or localhost).": "Push-сповіщення потребують HTTPS (або localhost).",
     "On iPhone/iPad, add this app to your Home Screen first, then open it from there.": "На iPhone/iPad спочатку додайте застосунок на Початковий екран і відкрийте його звідти.",
     "This browser doesn't support push notifications.": "Цей браузер не підтримує push-сповіщення.",
+    // stats: controls, charts, healthy ranges, forecast
+    "Period": "Період",
+    "Forecast": "Прогноз",
+    "Actual": "Фактично",
+    "today": "сьогодні",
+    "Today": "Сьогодні",
+    "Yesterday": "Вчора",
+    "as of": "станом на",
+    "so far": "поки що",
+    "no data": "немає даних",
+    "Healthy": "Норма",
+    "Healthy range": "Норма",
+    "Outside range": "Поза нормою",
+    "Today (so far)": "Сьогодні (поки що)",
+    "In range": "У нормі",
+    "Below range": "Нижче норми",
+    "Above range": "Вище норми",
+    "Feeds per day": "Годувань на день",
+    "Tap a day for details": "Торкніться дня, щоб побачити деталі",
+    "At a glance": "Коротко",
+    "WHO percentile": "Перцентиль ВООЗ",
+    "avg per day, last {n} days": "середнє за день, останні {n} дн.",
+    "{k} of {m} days in range": "{k} з {m} днів у нормі",
+    "Healthy ranges ahead": "Норма на майбутнє",
+    "Forecast: per-day metrics assume the last 7 days continue; weight and height keep tracking the same WHO growth percentile. Healthy ranges are the guidance for the baby's age on each date.": "Прогноз: для показників за день припускаємо, що останні 7 днів триватимуть; вага й зріст залишаються на тому ж перцентилі росту ВООЗ. Норма - це орієнтир для віку малюка на кожну дату.",
+    "Set the baby's birth date in Settings to see healthy ranges and forecasts.": "Вкажіть дату народження малюка в Налаштуваннях, щоб бачити норму та прогнози.",
+    "Set the baby's birth date in Settings to compare with healthy ranges and see forecasts.": "Вкажіть дату народження малюка в Налаштуваннях, щоб порівнювати з нормою та бачити прогнози.",
+    "Set the baby's sex in Settings for a tighter growth range and the exact WHO percentile.": "Вкажіть стать малюка в Налаштуваннях для точнішої норми росту та перцентиля ВООЗ.",
+    "Sex": "Стать",
+    "Not specified": "Не вказано",
+    "Girl": "Дівчинка",
+    "Boy": "Хлопчик",
+    "Picks the exact WHO growth curves; if not set, the healthy range spans both.": "Обирає точні криві росту ВООЗ; якщо не вказано, норма охоплює обидві.",
+    "Feeding calculator": "Калькулятор годування",
+    "Set a birth date in Settings to use the calculator, or enter an age below.": "Вкажіть дату народження в Налаштуваннях або введіть вік нижче.",
+    "Age (days)": "Вік (днів)",
+    "Weight (g)": "Вага (г)",
+    "Calculate": "Розрахувати",
+    "Recalculate": "Перерахувати",
+    "per feed": "за годування",
+    "per day": "за день",
+    "feeds/day": "годувань/день",
+    "suggested interval": "рекомендований інтервал",
+    "Formula (weight-based rule)": "Суміш (правило за вагою)",
+    "day": "день",
+    "feed": "годування",
+    "Sources:": "Джерела:",
+    "General guidance only, not medical advice - every baby is different.": "Лише загальна інформація, не медична консультація - кожна дитина різна.",
     // toasts / errors
     "Error: ": "Помилка: ",
     "Quick action added": "Швидку дію додано",
@@ -214,9 +262,19 @@ const I18N = {
 // order longest-key-first once, so tSummary()'s substring pass never lets a
 // short phrase (e.g. "Sleep") shadow a longer one that contains it (e.g.
 // "Sleeping...", "Slept") before the longer one gets its turn.
+// Short generic words used only as UI labels (never part of a composed
+// server-side summary). Left out of tSummary()'s substring swap so they
+// can't mangle unrelated text that happens to contain them.
+const I18N_NO_SUMMARY = new Set([
+  "Period", "Forecast", "Actual", "Healthy", "so far", "no data", "today", "Today", "Yesterday",
+  "days", "Sex", "Boy", "Girl", "as of", "Latest", "day", "feed", "per feed", "per day", "feeds/day",
+  "Calculate", "Recalculate", "Sources:", "Healthy range", "At a glance",
+]);
 const I18N_SUMMARY_KEYS = {};
 for (const lang of Object.keys(I18N)) {
-  I18N_SUMMARY_KEYS[lang] = Object.keys(I18N[lang]).sort((a, b) => b.length - a.length);
+  I18N_SUMMARY_KEYS[lang] = Object.keys(I18N[lang])
+    .filter((k) => !I18N_NO_SUMMARY.has(k))
+    .sort((a, b) => b.length - a.length);
 }
 
 function detectDefaultLang() {
@@ -278,6 +336,8 @@ const state = {
   lang: getCookie("bm_lang") || detectDefaultLang(),
   people: [],
   push: null, // this device's push status, see loadPushState()
+  // Stats page selection; period/forecast persist in cookies. Validated in init.
+  stats: { key: null, days: getCookie("bm_stats_days") || "90", forecast: getCookie("bm_stats_forecast") || "0" },
 };
 
 // This device's default person (cookie, not server-side - each device/
@@ -399,15 +459,16 @@ function choreType(key) {
 
 function fmtAge(days) {
   if (days == null) return null;
-  if (days < 0) return `due in ${Math.abs(days)}d`;
-  if (days < 14) return `${days}d`;
+  const u = state.lang === "uk" ? { d: "д", w: "тиж", mo: "міс" } : { d: "d", w: "w", mo: "mo" };
+  if (days < 0) return `due in ${Math.abs(days)}${u.d}`;
+  if (days < 14) return `${days}${u.d}`;
   if (days < 70) {
     const w = Math.floor(days / 7);
     const d = days % 7;
-    return d ? `${w}w ${d}d` : `${w}w`;
+    return d ? `${w}${u.w} ${d}${u.d}` : `${w}${u.w}`;
   }
   const months = days / 30.44;
-  return `${months.toFixed(months < 10 ? 1 : 0)}mo`;
+  return `${months.toFixed(months < 10 ? 1 : 0)}${u.mo}`;
 }
 
 function renderBabyInfoBar(profile, statuses) {
@@ -1274,203 +1335,353 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("history-refresh").addEventListener("click", loadHistory);
 });
 
-// ---------- stats ----------
+// ---------- stats: charts ----------
+//
+// One date-scaled line-chart engine for every metric. Charts are rendered at
+// a fixed *native* pixel width - never squeezed to fit - so text stays legible
+// however many days are plotted; a long period scrolls horizontally inside
+// .chart-scroll, while the y-axis lives in its own SVG beside it so the
+// scale stays visible while scrolling.
+//
+// Each point may carry the healthy range for that date (refMin/refMax/refMid),
+// including days in the future, and a `forecast` series is drawn dashed.
 
-// Date-scaled line chart (x-position reflects actual calendar gaps, not
-// evenly-spaced slots - matters for series like weight-gain-rate where
-// points land on irregular weigh-in dates, not one-per-day). Rendered at a
-// fixed *native* pixel width - never "100%" - so text stays a constant,
-// legible size regardless of how many days are plotted; a long period
-// scrolls horizontally (the .chart-block wrapper is overflow-x:auto)
-// instead of squeezing everything down to fit, which is what made stats
-// text unreadably small over long periods with the old bar chart.
-// points: [{date, value, refMin?, refMax?, ageDays?}]
-function svgSeriesChart(points, color) {
-  const h = 180;
-  const padTop = 16;
-  const padBottom = 34;
-  const padLeft = 10;
-  const padRight = 10;
-  const plotH = h - padTop - padBottom;
+const DAY_MS = 86400000;
 
-  const plotted = points.filter((p) => p.value != null);
-  const dayMs = 86400000;
-  const minDate = points[0].date;
-  const maxDate = points[points.length - 1].date;
-  const spanDays = Math.max(1, (new Date(maxDate) - new Date(minDate)) / dayMs);
-  const pxPerDay = points.length <= 14 ? 34 : points.length <= 60 ? 16 : 9;
-  const w = Math.max(340, spanDays * pxPerDay + padLeft + padRight);
-  const plotW = w - padLeft - padRight;
-
-  const refVals = points.flatMap((p) => [p.refMin, p.refMax]).filter((v) => v != null);
-  const vals = plotted.map((p) => p.value).concat(refVals);
-  const max = Math.max(1, ...vals);
-  const xFor = (dateStr) => padLeft + ((new Date(dateStr) - new Date(minDate)) / dayMs / spanDays) * plotW;
-  const yFor = (v) => padTop + plotH - (v / max) * plotH;
-
-  let band = "";
-  if (refVals.length) {
-    const top = points
-      .filter((p) => p.refMax != null)
-      .map((p, i) => `${i === 0 ? "M" : "L"}${xFor(p.date).toFixed(1)},${yFor(p.refMax).toFixed(1)}`)
-      .join(" ");
-    const bottom = [...points]
-      .reverse()
-      .filter((p) => p.refMin != null)
-      .map((p) => `L${xFor(p.date).toFixed(1)},${yFor(p.refMin).toFixed(1)}`)
-      .join(" ");
-    if (top) band = `<path d="${top} ${bottom} Z" fill="var(--ok)" opacity="0.15"></path>`;
-  }
-
-  let line = "";
-  if (plotted.length) {
-    const path = plotted
-      .map((p, i) => `${i === 0 ? "M" : "L"}${xFor(p.date).toFixed(1)},${yFor(p.value).toFixed(1)}`)
-      .join(" ");
-    line = `<path d="${path}" fill="none" stroke="${color}" stroke-width="2"></path>`;
-    // dots + value labels get crowded past ~40 points - past that, the line
-    // shape alone carries the trend and only first/last stay labeled
-    const showAll = plotted.length <= 40;
-    plotted.forEach((p, i) => {
-      const isEdge = i === 0 || i === plotted.length - 1;
-      if (!showAll && !isEdge) return;
-      line += `<circle cx="${xFor(p.date).toFixed(1)}" cy="${yFor(p.value).toFixed(1)}" r="2.5" fill="${color}"></circle>`;
-      line += `<text x="${xFor(p.date).toFixed(1)}" y="${yFor(p.value) - 6}" font-size="10" text-anchor="middle" fill="currentColor">${p.value}</text>`;
-    });
-  }
-
-  // x-axis date labels (sparse, ~6-8 ticks regardless of point density)
-  const tickCount = Math.min(8, points.length - 1 || 1);
-  let labels = "";
-  for (let i = 0; i <= tickCount; i++) {
-    const dt = new Date(new Date(minDate).getTime() + (spanDays * dayMs * i) / tickCount);
-    const dstr = dt.toISOString().slice(0, 10);
-    labels += `<text x="${xFor(dstr).toFixed(1)}" y="${h - 8}" font-size="9" text-anchor="middle" fill="currentColor" opacity="0.6">${dstr.slice(5)}</text>`;
-  }
-
-  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="color:inherit">${band}${line}${labels}</svg>`;
+function isoToMs(s) {
+  return Date.parse(s + "T00:00:00Z");
 }
 
-// True date-proportional line chart (x-position reflects actual calendar
-// gaps, not evenly-spaced buckets). Used for weight: actual readings +
-// linear-regression trend extrapolation + an "ideal" reference trajectory.
-function svgLineChart({ actual = [], trend = [], idealLow = [], idealHigh = [], unit = "" }) {
-  const allDates = [...actual, ...trend, ...idealLow, ...idealHigh].map((p) => p.date);
-  if (!allDates.length) return "";
-  const minDate = allDates.reduce((a, b) => (a < b ? a : b));
-  const maxDate = allDates.reduce((a, b) => (a > b ? a : b));
-  const dayMs = 86400000;
-  const spanDays = Math.max(1, (new Date(maxDate) - new Date(minDate)) / dayMs);
+function fmtShortDate(s) {
+  return new Date(isoToMs(s)).toLocaleDateString(state.lang === "uk" ? "uk-UA" : undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
 
-  // fixed native pixel width (never capped/squeezed to the container) so
-  // text stays legible over long spans - see svgSeriesChart for why.
-  const w = Math.max(360, spanDays * (spanDays <= 60 ? 14 : 6));
-  const h = 200;
-  const padTop = 16;
-  const padBottom = 28;
-  const padLeft = 4;
-  const padRight = 4;
-  const plotW = w - padLeft - padRight;
+function round1(v) {
+  return Math.round(v * 10) / 10;
+}
+
+// "ok" | "low" | "high" | null (no range to judge against)
+function rangeStatus(v, min, max) {
+  if (v == null || min == null || max == null) return null;
+  if (v < min) return "low";
+  if (v > max) return "high";
+  return "ok";
+}
+
+function statusText(status) {
+  return status === "ok" ? t("In range") : status === "low" ? t("Below range") : status === "high" ? t("Above range") : "";
+}
+
+// How one metric is labeled/formatted. `name` is a numeric field name, or
+// "count" for events per day. Durations (minutes) chart in hours.
+function metricMeta(ct, name) {
+  if (name === "count") {
+    const label = ct && ct.key === "feeding" ? t("Feeds per day") : t("Events per day");
+    return {
+      name, label, unit: "", scale: 1, zeroBased: true, last: false,
+      fmt: (v) => `${round1(v)}`,
+      axisFmt: (v) => `${round1(v)}`,
+      range: (a, b) => `${round1(a)}–${round1(b)}`,
+    };
+  }
+  const f = ct && ct.fields.find((x) => x.name === name);
+  const label = f ? t(f.label) : name.replace(/_/g, " ");
+  const last = !!(f && f.stat_agg === "last");
+  if (f && f.display === "duration") {
+    return {
+      name, label, unit: "h", scale: 60, zeroBased: true, last,
+      fmt: (v) => fmtDurationMinutes(v),
+      axisFmt: (v) => `${round1(v)}h`,
+      range: (a, b) => `${fmtDurationMinutes(a)}–${fmtDurationMinutes(b)}`,
+    };
+  }
+  const unit = (f && f.unit) || "";
+  // whole numbers for ml/g - a decimal on "748.4ml" is false precision
+  const n = unit === "ml" || unit === "g" ? Math.round : round1;
+  return {
+    name, label, unit, scale: 1, zeroBased: !last, last,
+    fmt: (v) => `${n(v)}${unit}`,
+    axisFmt: (v) => `${n(v)}`,
+    range: (a, b) => `${n(a)}–${n(b)}${unit}`,
+  };
+}
+
+// `hours` = the axis is in hours, where 1/2/3/4/6/12 read better than 2.5/5
+function niceTicks(lo, hi, target = 4, hours = false) {
+  const span = hi - lo || 1;
+  const raw = span / target;
+  let step;
+  if (hours && raw >= 1) {
+    step = [1, 2, 3, 4, 6, 12, 24].find((s) => s >= raw) || 24;
+  } else {
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const norm = raw / mag;
+    step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+  }
+  const ticks = [];
+  for (let k = Math.ceil(lo / step); k * step <= hi + 1e-9; k++) ticks.push(+(k * step).toFixed(6));
+  return ticks;
+}
+
+// cfg: {title, meta, points:[{date,value,refMin,refMax,refMid,partial,future,age_days}],
+//       forecast:[{date,value}], today, refSource:{source_label,source_url}|null, forecastOn}
+// Returns a .chart-block element (or null if there is nothing to draw).
+function buildChart(cfg) {
+  const { meta, points, today } = cfg;
+  const forecast = cfg.forecast || [];
+  if (!points.length) return null;
+
+  const vals = [];
+  points.forEach((p) => {
+    [p.value, p.refMin, p.refMax].forEach((v) => v != null && vals.push(v));
+  });
+  forecast.forEach((p) => vals.push(p.value));
+  if (!vals.length) return null;
+
+  const h = 220, padTop = 22, padBottom = 30, padLeft = 8, padRight = 18, axisW = 46;
   const plotH = h - padTop - padBottom;
+  const sc = (v) => v / meta.scale;
 
-  const allVals = [...actual, ...trend, ...idealLow, ...idealHigh].map((p) => p.value).filter((v) => v != null);
-  const minVal = Math.min(...allVals);
-  const maxVal = Math.max(...allVals);
-  const valPad = Math.max(1, (maxVal - minVal) * 0.1);
-  const yMin = minVal - valPad;
-  const yMax = maxVal + valPad;
+  const allMs = points.map((p) => isoToMs(p.date)).concat(forecast.map((p) => isoToMs(p.date)));
+  const minMs = Math.min(...allMs);
+  const maxMs = Math.max(...allMs);
+  const spanDays = Math.max(1, Math.round((maxMs - minMs) / DAY_MS));
+  const nDays = spanDays + 1;
+  const pxPerDay = nDays <= 14 ? 34 : nDays <= 45 ? 18 : nDays <= 100 ? 11 : nDays <= 200 ? 7 : 4;
+  const plotW = Math.max(300, spanDays * pxPerDay);
+  const w = plotW + padLeft + padRight;
+  const xFor = (ds) => padLeft + ((isoToMs(ds) - minMs) / DAY_MS / spanDays) * plotW;
 
-  const xFor = (dateStr) => padLeft + ((new Date(dateStr) - new Date(minDate)) / dayMs / spanDays) * plotW;
-  const yFor = (v) => padTop + plotH - ((v - yMin) / (yMax - yMin || 1)) * plotH;
+  let lo = Math.min(...vals.map(sc));
+  let hi = Math.max(...vals.map(sc));
+  if (meta.zeroBased) lo = 0;
+  const pad = (hi - lo) * 0.08 || 1;
+  if (!meta.zeroBased) lo -= pad;
+  hi += pad;
+  const yS = (sv) => padTop + plotH - ((sv - lo) / (hi - lo)) * plotH;
+  const yFor = (v) => yS(sc(v));
+  const ticks = niceTicks(lo, hi, 4, meta.scale === 60);
 
-  const pathFor = (points) =>
-    points
-      .filter((p) => p.value != null)
-      .map((p, i) => `${i === 0 ? "M" : "L"}${xFor(p.date).toFixed(1)},${yFor(p.value).toFixed(1)}`)
-      .join(" ");
+  const P = (x, y) => `${x.toFixed(1)},${y.toFixed(1)}`;
+  const linePath = (list, val) => list.map((p, i) => `${i ? "L" : "M"}${P(xFor(p.date), yFor(val(p)))}`).join(" ");
 
-  let svg = "";
-
-  // ideal band (shaded low-high area)
-  if (idealLow.length && idealHigh.length) {
-    const top = idealHigh.map((p, i) => `${i === 0 ? "M" : "L"}${xFor(p.date)},${yFor(p.value)}`).join(" ");
-    const bottom = [...idealLow]
-      .reverse()
-      .map((p) => `L${xFor(p.date)},${yFor(p.value)}`)
-      .join(" ");
-    svg += `<path d="${top} ${bottom} Z" fill="var(--ok)" opacity="0.12"></path>`;
-  }
-
-  // trend line (actual portion solid, projected portion dashed)
-  if (trend.length) {
-    const solid = trend.filter((p) => !p.projected);
-    const dashedPart = trend.filter((p, i) => p.projected || (i > 0 && trend[i - 1].projected === false && p.projected !== false));
-    if (solid.length) svg += `<path d="${pathFor(solid)}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 3"></path>`;
-    const proj = trend.filter((p) => p.projected);
-    const bridge = solid.length ? [solid[solid.length - 1], ...proj] : proj;
-    if (proj.length) svg += `<path d="${pathFor(bridge)}" fill="none" stroke="var(--primary)" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.8"></path>`;
-  }
-
-  // actual readings - solid line + dots
-  if (actual.length) {
-    svg += `<path d="${pathFor(actual)}" fill="none" stroke="var(--ok)" stroke-width="2.5"></path>`;
-    actual.forEach((p) => {
-      if (p.value == null) return;
-      svg += `<circle cx="${xFor(p.date)}" cy="${yFor(p.value)}" r="3.5" fill="var(--ok)"></circle>`;
-    });
-    // label first/last point
-    const first = actual[0];
-    const last = actual[actual.length - 1];
-    svg += `<text x="${xFor(first.date)}" y="${yFor(first.value) - 8}" font-size="10" text-anchor="start" fill="currentColor">${first.value}${unit}</text>`;
-    if (last !== first) {
-      svg += `<text x="${xFor(last.date)}" y="${yFor(last.value) - 8}" font-size="10" text-anchor="end" fill="currentColor" font-weight="600">${last.value}${unit}</text>`;
+  // --- healthy band: contiguous runs of days that have a range ---
+  const runs = [];
+  let cur = [];
+  points.forEach((p) => {
+    if (p.refMin != null && p.refMax != null) cur.push(p);
+    else if (cur.length) {
+      runs.push(cur);
+      cur = [];
     }
+  });
+  if (cur.length) runs.push(cur);
+  let band = "";
+  runs.forEach((run) => {
+    if (run.length === 1) {
+      const x = xFor(run[0].date);
+      const y1 = yFor(run[0].refMax);
+      band += `<rect x="${(x - 6).toFixed(1)}" y="${y1.toFixed(1)}" width="12" height="${(yFor(run[0].refMin) - y1).toFixed(1)}" fill="var(--ok)" opacity="0.2"></rect>`;
+      return;
+    }
+    const top = linePath(run, (p) => p.refMax);
+    const bottomPts = [...run].reverse();
+    const bottom = linePath(bottomPts, (p) => p.refMin);
+    band += `<path d="${top} L${bottom.slice(1)} Z" fill="var(--ok)" opacity="0.16"></path>`;
+    band += `<path d="${top}" fill="none" stroke="var(--ok)" stroke-width="1" opacity="0.6"></path>`;
+    band += `<path d="${bottom}" fill="none" stroke="var(--ok)" stroke-width="1" opacity="0.6"></path>`;
+    const mids = run.filter((p) => p.refMid != null);
+    if (mids.length > 1) {
+      band += `<path d="${linePath(mids, (p) => p.refMid)}" fill="none" stroke="var(--ok)" stroke-width="1" stroke-dasharray="2 4" opacity="0.7"></path>`;
+    }
+  });
+
+  // --- grid ---
+  let grid = "";
+  ticks.forEach((tv) => {
+    grid += `<line x1="0" x2="${w}" y1="${yS(tv).toFixed(1)}" y2="${yS(tv).toFixed(1)}" stroke="currentColor" opacity="0.09"></line>`;
+  });
+
+  // --- future region + today marker ---
+  const hasFuture = points.some((p) => p.future);
+  const todayMs = today ? isoToMs(today) : null;
+  const todayInRange = todayMs != null && todayMs >= minMs && todayMs <= maxMs;
+  let marker = "";
+  if (todayInRange) {
+    const tx = xFor(today);
+    if (hasFuture) {
+      marker += `<rect x="${tx.toFixed(1)}" y="${padTop}" width="${(w - tx).toFixed(1)}" height="${plotH}" fill="currentColor" opacity="0.05"></rect>`;
+      marker += `<text x="${(tx + 5).toFixed(1)}" y="${padTop - 8}" font-size="9.5" fill="currentColor" opacity="0.7">${t("Forecast")} →</text>`;
+    }
+    marker += `<line x1="${tx.toFixed(1)}" x2="${tx.toFixed(1)}" y1="${padTop}" y2="${h - padBottom}" stroke="currentColor" stroke-width="1" stroke-dasharray="2 3" opacity="0.4"></line>`;
+    marker += `<text x="${(tx - 4).toFixed(1)}" y="${padTop - 8}" font-size="9.5" text-anchor="end" fill="currentColor" opacity="0.7">${t("today")}</text>`;
   }
 
-  // x-axis date labels (sparse, ~6 ticks)
-  const tickCount = Math.min(6, Math.round(spanDays) + 1);
-  let labels = "";
-  for (let i = 0; i <= tickCount; i++) {
-    const t = new Date(new Date(minDate).getTime() + (spanDays * dayMs * i) / tickCount);
-    const dstr = t.toISOString().slice(0, 10);
-    labels += `<text x="${xFor(dstr)}" y="${h - 8}" font-size="9" text-anchor="middle" fill="currentColor" opacity="0.6">${dstr.slice(5)}</text>`;
+  // --- actual values ---
+  const actual = points.filter((p) => p.value != null && !p.partial && !p.future);
+  const partial = points.filter((p) => p.value != null && p.partial);
+  let actualSvg = "";
+  if (actual.length) {
+    actualSvg += `<path d="${linePath(actual, (p) => p.value)}" fill="none" stroke="var(--primary)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"></path>`;
+  }
+  if (partial.length && actual.length) {
+    actualSvg += `<path d="${linePath([actual[actual.length - 1], partial[0]], (p) => p.value)}" fill="none" stroke="var(--primary)" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.7"></path>`;
+  }
+  let outliers = 0;
+  const showDots = actual.length <= 60;
+  // label every point only when there is room for the text; otherwise just
+  // the ends (the readout below shows any day's exact value on hover/tap)
+  const labelLen = actual.length ? meta.fmt(actual[0].value).length : 0;
+  const labelAll = actual.length <= 8 || (labelLen <= 3 && pxPerDay >= 18 && actual.length <= 20);
+  actual.forEach((p, i) => {
+    const isEnd = i === 0 || i === actual.length - 1;
+    const st = rangeStatus(p.value, p.refMin, p.refMax);
+    const out = st === "low" || st === "high";
+    if (out) outliers++;
+    const x = xFor(p.date);
+    const y = yFor(p.value);
+    if (showDots || isEnd || out) {
+      actualSvg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.4" fill="${out ? "var(--warn)" : "var(--primary)"}" stroke="var(--surface)" stroke-width="1"></circle>`;
+    }
+    if (labelAll || isEnd) {
+      const anchor = i === 0 && actual.length > 1 ? "start" : i === actual.length - 1 && actual.length > 1 ? "end" : "middle";
+      actualSvg += `<text x="${x.toFixed(1)}" y="${(y - 9).toFixed(1)}" font-size="10" text-anchor="${anchor}" fill="currentColor" font-weight="${i === actual.length - 1 ? 600 : 400}">${meta.fmt(p.value)}</text>`;
+    }
+  });
+  partial.forEach((p) => {
+    actualSvg += `<circle cx="${xFor(p.date).toFixed(1)}" cy="${yFor(p.value).toFixed(1)}" r="3.6" fill="var(--surface)" stroke="var(--primary)" stroke-width="1.8"></circle>`;
+  });
+
+  // --- forecast ---
+  let forecastSvg = "";
+  if (forecast.length) {
+    forecastSvg += `<path d="${linePath(forecast, (p) => p.value)}" fill="none" stroke="var(--primary)" stroke-width="2" stroke-dasharray="6 5" opacity="0.75" stroke-linecap="round"></path>`;
+    const end = forecast[forecast.length - 1];
+    const ex = xFor(end.date);
+    const ey = yFor(end.value);
+    forecastSvg += `<circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="3.4" fill="var(--surface)" stroke="var(--primary)" stroke-width="1.6"></circle>`;
+    forecastSvg += `<text x="${ex.toFixed(1)}" y="${(ey - 9).toFixed(1)}" font-size="10" text-anchor="end" fill="currentColor" opacity="0.85">${meta.fmt(end.value)}</text>`;
   }
 
-  // "today" marker
-  const todayStr = new Date().toISOString().slice(0, 10);
-  let todayLine = "";
-  if (todayStr >= minDate && todayStr <= maxDate) {
-    todayLine = `<line x1="${xFor(todayStr)}" y1="${padTop}" x2="${xFor(todayStr)}" y2="${h - padBottom}" stroke="currentColor" stroke-width="1" stroke-dasharray="2 3" opacity="0.35"></line>`;
+  // --- x-axis labels ---
+  const tickN = Math.max(2, Math.min(14, Math.floor(plotW / 78)));
+  let xLabels = "";
+  for (let i = 0; i <= tickN; i++) {
+    const ds = new Date(minMs + Math.round((spanDays * i) / tickN) * DAY_MS).toISOString().slice(0, 10);
+    const anchor = i === 0 ? "start" : i === tickN ? "end" : "middle";
+    xLabels += `<text x="${xFor(ds).toFixed(1)}" y="${h - 9}" font-size="9.5" text-anchor="${anchor}" fill="currentColor" opacity="0.65">${fmtShortDate(ds)}</text>`;
   }
 
-  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="color:inherit">${svg}${todayLine}${labels}</svg>`;
+  // --- hit targets (hover on desktop, tap on phones) ---
+  const half = Math.max(7, plotW / spanDays / 2);
+  const hits = points
+    .map((p, i) => `<rect class="hit" data-i="${i}" x="${(xFor(p.date) - half).toFixed(1)}" y="${padTop}" width="${(half * 2).toFixed(1)}" height="${plotH}" fill="transparent"></rect>`)
+    .join("");
+
+  const axisSvg = `<svg class="chart-axis" width="${axisW}" height="${h}" viewBox="0 0 ${axisW} ${h}">${ticks
+    .map((tv) => `<text x="${axisW - 6}" y="${(yS(tv) + 3.5).toFixed(1)}" text-anchor="end" font-size="9.5" fill="currentColor" opacity="0.65">${meta.axisFmt(tv)}</text>`)
+    .join("")}</svg>`;
+  const plotSvg = `<svg class="chart-plot" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${grid}${marker}${band}${forecastSvg}${actualSvg}${xLabels}<line class="cursor" y1="${padTop}" y2="${h - padBottom}" stroke="currentColor" stroke-width="1" opacity="0.5" style="display:none"></line>${hits}</svg>`;
+
+  const legendBits = [`<span><i class="dot" style="background:var(--primary)"></i>${t("Actual")}</span>`];
+  if (runs.length) legendBits.push(`<span><i class="dot band"></i>${t("Healthy range")}</span>`);
+  if (forecast.length) legendBits.push(`<span><i class="dash"></i>${t("Forecast")}</span>`);
+  if (partial.length) legendBits.push(`<span><i class="dot hollow"></i>${t("Today (so far)")}</span>`);
+  if (outliers) legendBits.push(`<span><i class="dot" style="background:var(--warn)"></i>${t("Outside range")}</span>`);
+
+  const src = cfg.refSource;
+  const footer = src
+    ? `<div class="chart-ref-note">${t("Healthy range")}: <a href="${src.source_url}" target="_blank" rel="noopener">${src.source_label}</a>. ${t("General guidance only, not medical advice.")}</div>`
+    : "";
+
+  const el = document.createElement("div");
+  el.className = "chart-block";
+  el.innerHTML = `
+    <h3>${cfg.title || meta.label}${meta.unit ? ` <span class="chart-unit">${meta.unit}</span>` : ""}</h3>
+    <div class="chart-wrap">${axisSvg}<div class="chart-scroll">${plotSvg}</div></div>
+    <div class="chart-readout"></div>
+    <div class="chart-legend">${legendBits.join("")}</div>
+    ${footer}`;
+
+  // --- interaction: a readout for the hovered/tapped day ---
+  const readout = el.querySelector(".chart-readout");
+  const cursor = el.querySelector(".cursor");
+  const fcByDate = Object.fromEntries(forecast.map((p) => [p.date, p.value]));
+  const show = (i) => {
+    const p = points[i];
+    const bits = [`<strong>${fmtShortDate(p.date)}</strong>`];
+    if (p.age_days != null) bits.push(fmtAge(p.age_days));
+    if (p.value != null) {
+      const st = p.partial ? null : rangeStatus(p.value, p.refMin, p.refMax);
+      bits.push(`<span class="ro-val ${st || ""}">${meta.fmt(p.value)}${p.partial ? ` (${t("so far")})` : ""}</span>`);
+    } else if (fcByDate[p.date] != null) {
+      const st = rangeStatus(fcByDate[p.date], p.refMin, p.refMax);
+      bits.push(`${t("Forecast")}: <span class="ro-val ${st || ""}">${meta.fmt(fcByDate[p.date])}</span>`);
+    } else if (!p.future) {
+      bits.push(`<span class="muted">${t("no data")}</span>`);
+    }
+    if (p.refMin != null) bits.push(`${t("Healthy")}: ${meta.range(p.refMin, p.refMax)}`);
+    readout.innerHTML = bits.join(" · ");
+    const x = xFor(p.date);
+    cursor.setAttribute("x1", x.toFixed(1));
+    cursor.setAttribute("x2", x.toFixed(1));
+    cursor.style.display = "";
+  };
+  el.querySelectorAll(".hit").forEach((r) => {
+    r.addEventListener("mouseenter", () => show(Number(r.dataset.i)));
+    r.addEventListener("click", () => show(Number(r.dataset.i)));
+  });
+  let initial = -1;
+  points.forEach((p, i) => {
+    if (p.value != null) initial = i;
+  });
+  if (initial >= 0) show(initial);
+  else readout.innerHTML = `<span class="muted">${t("Tap a day for details")}</span>`;
+
+  // start scrolled to the interesting part: recent data, or today with the
+  // forecast stretching off to the right
+  const scroller = el.querySelector(".chart-scroll");
+  requestAnimationFrame(() => {
+    if (hasFuture && todayInRange) scroller.scrollLeft = Math.max(0, xFor(today) - scroller.clientWidth * 0.5);
+    else scroller.scrollLeft = scroller.scrollWidth;
+  });
+  return el;
 }
 
 // ---------- stats: at-a-glance overview ----------
 
-function svgSparkline(points, color) {
-  const vals = points.map((p) => p.value).filter((v) => v != null);
-  if (!vals.length) return `<div class="sparkline-empty">${t("No data yet")}</div>`;
-  const w = 120;
-  const h = 36;
-  const max = Math.max(...vals, 1);
-  const min = Math.min(...vals, 0);
+// points: [{value, refMin, refMax}] in day order (evenly spaced)
+function svgSparkline(points, color, zeroBased = true) {
+  const actual = points.map((p) => p.value).filter((v) => v != null);
+  if (!actual.length) return `<div class="sparkline-empty">${t("No data yet")}</div>`;
+  const all = points.flatMap((p) => [p.value, p.refMin, p.refMax]).filter((v) => v != null);
+  const w = 160;
+  const h = 40;
+  let min = Math.min(...all);
+  const max = Math.max(...all, 1);
+  if (zeroBased) min = Math.min(min, 0);
   const range = max - min || 1;
   const step = w / Math.max(1, points.length - 1);
-  const coords = points.map((p, i) => {
-    const x = i * step;
-    const y = p.value == null ? null : h - ((p.value - min) / range) * (h - 4) - 2;
-    return { x, y };
-  });
-  const path = coords
-    .filter((c) => c.y != null)
-    .map((c, i) => `${i === 0 ? "M" : "L"}${c.x.toFixed(1)},${c.y.toFixed(1)}`)
-    .join(" ");
-  const lastVisible = [...coords].reverse().find((c) => c.y != null);
-  const dot = lastVisible ? `<circle cx="${lastVisible.x}" cy="${lastVisible.y}" r="2.5" fill="${color}"></circle>` : "";
+  const yFor = (v) => h - ((v - min) / range) * (h - 6) - 3;
+
+  const bandPts = points.map((p, i) => ({ x: i * step, lo: p.refMin, hi: p.refMax })).filter((b) => b.lo != null && b.hi != null);
+  let band = "";
+  if (bandPts.length > 1) {
+    const top = bandPts.map((b, i) => `${i ? "L" : "M"}${b.x.toFixed(1)},${yFor(b.hi).toFixed(1)}`).join(" ");
+    const bottom = [...bandPts].reverse().map((b) => `L${b.x.toFixed(1)},${yFor(b.lo).toFixed(1)}`).join(" ");
+    band = `<path d="${top} ${bottom} Z" fill="var(--ok)" opacity="0.18"></path>`;
+  }
+  const coords = points.map((p, i) => ({ x: i * step, y: p.value == null ? null : yFor(p.value) })).filter((c) => c.y != null);
+  const path = coords.map((c, i) => `${i ? "L" : "M"}${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+  const last = coords[coords.length - 1];
   return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">
-      <path d="${path}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke"></path>
-      ${dot}
+      ${band}
+      <path d="${path}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"></path>
+      <circle cx="${last.x}" cy="${last.y}" r="2.5" fill="${color}"></circle>
     </svg>`;
 }
 
@@ -1537,6 +1748,113 @@ async function loadCompetition() {
     .join("");
 }
 
+// ---------- stats: overview + detail ----------
+
+// Period / forecast choices. Short chip text is language-specific inline (not
+// in the I18N dictionary) so these tiny abbreviations can't collide with the
+// substring-based summary translation.
+const STATS_PERIODS = [
+  { v: "1", en: "24h", uk: "24 год" },
+  { v: "7", en: "7d", uk: "7 д" },
+  { v: "14", en: "14d", uk: "14 д" },
+  { v: "30", en: "30d", uk: "30 д" },
+  { v: "90", en: "90d", uk: "90 д" },
+  { v: "365", en: "1y", uk: "1 р" },
+  { v: "all", en: "All", uk: "Все" },
+];
+const STATS_FORECASTS = [
+  { v: "0", en: "Off", uk: "Вимк" },
+  { v: "7", en: "+1w", uk: "+1 тиж" },
+  { v: "14", en: "+2w", uk: "+2 тиж" },
+  { v: "30", en: "+1m", uk: "+1 міс" },
+  { v: "90", en: "+3m", uk: "+3 міс" },
+  { v: "180", en: "+6m", uk: "+6 міс" },
+  { v: "365", en: "+1y", uk: "+1 р" },
+];
+
+function chipLabel(chip) {
+  return state.lang === "uk" ? chip.uk : chip.en;
+}
+
+function renderChips(container, chips, current, onPick) {
+  container.innerHTML = chips
+    .map((c) => `<button type="button" class="chip ${String(c.v) === String(current) ? "active" : ""}" data-v="${c.v}">${c.html || chipLabel(c)}</button>`)
+    .join("");
+  container.querySelectorAll(".chip").forEach((b) => b.addEventListener("click", () => onPick(b.dataset.v)));
+}
+
+// What the overview cards and the "at a glance" block need to know about one
+// metric: for per-day metrics the last full day and the recent average, for
+// point-in-time readings (weight/height) the latest reading - each judged
+// against the healthy range for that date.
+function metricSummary(data, name, meta) {
+  const days = data.days;
+  const refOf = (d) =>
+    d && d[`${name}_ref_min`] != null
+      ? { min: d[`${name}_ref_min`], max: d[`${name}_ref_max`], mid: d[`${name}_ref_mid`] }
+      : null;
+
+  if (meta.last) {
+    const latest = data.latest && data.latest[name];
+    if (!latest) return null;
+    const ref = refOf(days.find((d) => d.date === latest.date));
+    return {
+      kind: "last",
+      value: latest.value,
+      date: latest.date,
+      ref,
+      status: ref ? rangeStatus(latest.value, ref.min, ref.max) : null,
+      percentile: latest.percentile,
+    };
+  }
+
+  // only full days from the first logged event on - today is unfinished and
+  // days before tracking began aren't "zero", they're just not recorded
+  const done = days.filter((d) => !d.future && !d.partial);
+  const firstIdx = done.findIndex((d) => d.count > 0);
+  const seen = firstIdx < 0 ? [] : done.slice(firstIdx);
+  const valued = seen.filter((d) => (name === "count" ? true : d[name] != null));
+  if (!valued.length) return null;
+  const value = (d) => (name === "count" ? d.count : d[name]);
+
+  const recent = valued.slice(-7);
+  const avg = recent.reduce((s, d) => s + value(d), 0) / recent.length;
+  const lastDay = valued[valued.length - 1];
+  const ref = refOf(lastDay);
+  const withRef = recent.filter((d) => refOf(d));
+  const inRange = withRef.filter((d) => {
+    const r = refOf(d);
+    return rangeStatus(value(d), r.min, r.max) === "ok";
+  }).length;
+  return {
+    kind: "avg",
+    avg,
+    n: recent.length,
+    lastDay: { date: lastDay.date, value: value(lastDay) },
+    ref,
+    status: ref ? rangeStatus(avg, ref.min, ref.max) : null,
+    dayStatus: ref ? rangeStatus(value(lastDay), ref.min, ref.max) : null,
+    inRange,
+    of: withRef.length,
+  };
+}
+
+function metricNames(ct, data) {
+  const hasLast = data.numeric_fields.some((n) => metricMeta(ct, n).last);
+  // "events per day" is noise for a weigh-in / measurement log
+  return hasLast ? [...data.numeric_fields] : ["count", ...data.numeric_fields];
+}
+
+function hasRef(data, name) {
+  return data.days.some((d) => d[`${name}_ref_min`] != null);
+}
+
+function flagGlyph(status) {
+  return status === "ok" ? "✓" : status === "low" ? "▼" : status === "high" ? "▲" : "";
+}
+
+// ----- overview -----
+
 async function showStatsOverview() {
   document.getElementById("stats-overview").classList.remove("hidden");
   document.getElementById("stats-detail").classList.add("hidden");
@@ -1553,150 +1871,291 @@ async function loadStatsOverview() {
   const box = document.getElementById("stats-overview");
   box.innerHTML = `<p class="muted-note">${t("Loading…")}</p>`;
   const results = await Promise.all(
-    state.choreTypes.map((ct) => api(`/api/stats/${ct.key}?all_time=true`).catch(() => null))
+    state.choreTypes.map((ct) => {
+      // weigh-ins are sparse, so show their whole history; everything else, the last month
+      const hasLast = ct.fields.some((f) => f.numeric_stat && f.stat_agg === "last");
+      return api(`/api/stats/${ct.key}?${hasLast ? "all_time=true" : "days=30"}`).catch(() => null);
+    })
   );
-  box.innerHTML = `<div class="overview-grid"></div>`;
+  if (!state.choreTypes.length) {
+    box.innerHTML = `<p class="muted-note">${t("No chore types yet.")}</p>`;
+    return;
+  }
+
+  let html = "";
+  if (results.some((d) => d && d.has_guidance && d.age_days == null)) {
+    html += `<div class="stats-notice">${t("Set the baby's birth date in Settings to compare with healthy ranges and see forecasts.")}</div>`;
+  }
+  box.innerHTML = `${html}<div class="overview-grid"></div>`;
   const grid = box.querySelector(".overview-grid");
+
   state.choreTypes.forEach((ct, i) => {
     const data = results[i];
     const card = document.createElement("div");
     card.className = "overview-card";
-    let sparkHtml = `<div class="sparkline-empty">${t("No data yet")}</div>`;
-    let keyStat = "";
-    if (data && data.days.length) {
-      // pick the most meaningful numeric field for the sparkline: prefer a
-      // "last"-style reading (e.g. weight), else the first numeric field,
-      // else fall back to event counts
-      const field = ct.fields.find((f) => f.numeric_stat && f.stat_agg === "last") || ct.fields.find((f) => f.numeric_stat);
-      const points = data.days.map((d) => ({ date: d.date, value: field ? d[field.name] : d.count }));
-      sparkHtml = svgSparkline(points, "var(--primary)");
-      const lastVal = [...points].reverse().find((p) => p.value != null);
-      keyStat = field && lastVal ? `${lastVal.value}${t(field.unit || "")}` : `${data.total_events} ${t("total")}`;
+    let body = `<div class="sparkline-empty">${t("No data yet")}</div>`;
+    let badge = "";
+
+    if (data && data.total_events > 0) {
+      // metrics that have a healthy range come first; fall back to the first metric
+      const names = metricNames(ct, data);
+      const candidates = names.filter((n) => hasRef(data, n));
+      const chosen = (candidates.length ? candidates : names.slice(0, 1))
+        .map((n) => ({ name: n, meta: metricMeta(ct, n) }))
+        .map((m) => ({ ...m, sum: metricSummary(data, m.name, m.meta) }))
+        .filter((m) => m.sum)
+        .slice(0, 3);
+
+      if (chosen.length) {
+        const first = chosen[0];
+        const points = data.days
+          // today is unfinished, so it would draw a misleading dip - except for
+          // point-in-time readings, which aren't cumulative
+          .filter((d) => !d.future && (first.meta.last || !d.partial))
+          .map((d) => ({
+            value: first.name === "count" ? d.count : d[first.name],
+            refMin: d[`${first.name}_ref_min`],
+            refMax: d[`${first.name}_ref_max`],
+          }));
+        const spark = svgSparkline(points, "var(--primary)", first.meta.zeroBased);
+        const rows = chosen
+          .map((m) => {
+            const s = m.sum;
+            const status = s.kind === "last" ? s.status : s.dayStatus;
+            const val = s.kind === "last" ? s.value : s.lastDay.value;
+            const when =
+              s.kind === "last"
+                ? fmtShortDate(s.date)
+                : s.lastDay.date === addDaysIso(data.today, -1)
+                  ? t("Yesterday")
+                  : fmtShortDate(s.lastDay.date);
+            const pct = s.kind === "last" && s.percentile != null ? ` <span class="ov-pct">P${Math.round(s.percentile)}</span>` : "";
+            return `<div class="ov-row">
+                <span class="ov-label">${m.meta.label}<span class="ov-when">${when}</span></span>
+                <span class="ov-val">${m.meta.fmt(val)}${pct}</span>
+                <span class="ov-flag ${status || ""}" title="${status ? statusText(status) : ""}">${flagGlyph(status)}</span>
+              </div>
+              ${s.ref ? `<div class="ov-range">${t("Healthy")}: ${m.meta.range(s.ref.min, s.ref.max)}</div>` : ""}`;
+          })
+          .join("");
+        const statuses = chosen.map((m) => (m.sum.kind === "last" ? m.sum.status : m.sum.dayStatus)).filter(Boolean);
+        if (statuses.length) {
+          const bad = statuses.some((s) => s !== "ok");
+          badge = `<span class="badge ${bad ? "warn" : "ok"}">${bad ? "⚠" : "✓"}</span>`;
+        }
+        body = `<div class="overview-spark">${spark}</div>${rows}`;
+      } else {
+        body = `<div class="sparkline-empty">${t("No data yet")}</div>`;
+      }
     }
     card.innerHTML = `
       <div class="overview-card-head">
         <span class="overview-icon">${ct.icon}</span>
         <span class="overview-label">${t(ct.label)}</span>
+        ${badge}
       </div>
-      <div class="overview-spark">${sparkHtml}</div>
-      <div class="overview-keystat">${keyStat}</div>
-    `;
+      ${body}`;
     card.addEventListener("click", () => showStatsDetail(ct.key));
     grid.appendChild(card);
   });
-  if (!state.choreTypes.length) box.innerHTML = `<p class="muted-note">${t("No chore types yet.")}</p>`;
+}
+
+function addDaysIso(ds, n) {
+  return new Date(isoToMs(ds) + n * DAY_MS).toISOString().slice(0, 10);
+}
+
+// ----- detail -----
+
+function renderStatsControls() {
+  const s = state.stats;
+  renderChips(
+    document.getElementById("stats-type-chips"),
+    state.choreTypes.map((ct) => ({ v: ct.key, html: `${ct.icon} ${t(ct.label)}` })),
+    s.key,
+    (v) => loadStats(v)
+  );
+  renderChips(document.getElementById("stats-period-chips"), STATS_PERIODS, s.days, (v) => {
+    s.days = v;
+    setCookie("bm_stats_days", v);
+    loadStats();
+  });
+  renderChips(document.getElementById("stats-forecast-chips"), STATS_FORECASTS, s.forecast, (v) => {
+    s.forecast = v;
+    setCookie("bm_stats_forecast", v);
+    loadStats();
+  });
+}
+
+function insightCardHtml(m) {
+  const s = m.sum;
+  const status = s.status;
+  let value;
+  let sub;
+  if (s.kind === "last") {
+    value = m.meta.fmt(s.value);
+    sub = `${t("as of")} ${fmtShortDate(s.date)}`;
+  } else {
+    value = m.meta.fmt(s.avg);
+    sub = t("avg per day, last {n} days").replace("{n}", s.n);
+  }
+  const extra = [];
+  if (s.ref) extra.push(`${t("Healthy")}: <strong>${m.meta.range(s.ref.min, s.ref.max)}</strong>`);
+  if (s.kind === "last" && s.percentile != null) extra.push(`${t("WHO percentile")}: <strong>${Math.round(s.percentile)}</strong>`);
+  if (s.kind === "avg" && s.of) extra.push(t("{k} of {m} days in range").replace("{k}", s.inRange).replace("{m}", s.of));
+  return `<div class="insight ${status || ""}">
+      <div class="insight-top"><span class="insight-label">${m.meta.label}</span>${status ? `<span class="badge ${status}">${flagGlyph(status)} ${statusText(status)}</span>` : ""}</div>
+      <div class="insight-value">${value}</div>
+      <div class="insight-sub">${sub}</div>
+      ${extra.map((x) => `<div class="insight-extra">${x}</div>`).join("")}
+    </div>`;
+}
+
+// Healthy ranges at a few dates ahead, next to where the forecast expects you to be
+function aheadTableHtml(data, ct, metrics) {
+  const fut = data.days.filter((d) => d.future);
+  const todayEntry = data.days.find((d) => d.date === data.today);
+  if (!fut.length || !todayEntry) return "";
+  const horizon = fut.length;
+  const offsets = [...new Set([Math.ceil(horizon / 4), Math.ceil(horizon / 2), Math.ceil((horizon * 3) / 4), horizon])].filter((k) => k >= 1);
+  const cols = [{ head: t("Today"), entry: todayEntry }].concat(
+    offsets.map((k) => ({
+      head: k < 14 ? `+${k}${state.lang === "uk" ? " д" : "d"}` : k <= 56 ? `+${Math.round(k / 7)}${state.lang === "uk" ? " тиж" : "w"}` : `+${Math.round(k / 30.44)}${state.lang === "uk" ? " міс" : "mo"}`,
+      entry: fut[k - 1],
+    }))
+  );
+  const rows = metrics
+    .filter((m) => cols.some((c) => c.entry[`${m.name}_ref_min`] != null))
+    .map((m) => {
+      const fc = Object.fromEntries(((data.forecast && data.forecast[m.name]) || []).map((p) => [p.date, p.value]));
+      const cells = cols
+        .map((c) => {
+          const lo = c.entry[`${m.name}_ref_min`];
+          const hi = c.entry[`${m.name}_ref_max`];
+          if (lo == null) return `<td class="muted">–</td>`;
+          const fv = fc[c.entry.date];
+          const st = rangeStatus(fv, lo, hi);
+          return `<td><div class="ah-range">${m.meta.range(lo, hi)}</div>${fv != null ? `<div class="ah-fc ${st || ""}">${t("Forecast")}: ${m.meta.fmt(fv)}</div>` : ""}</td>`;
+        })
+        .join("");
+      return `<tr><th>${m.meta.label}</th>${cells}</tr>`;
+    })
+    .join("");
+  if (!rows) return "";
+  const head = cols
+    .map((c) => `<th><div>${c.head}</div><div class="ah-date">${fmtShortDate(c.entry.date)}${c.entry.age_days != null ? ` · ${fmtAge(c.entry.age_days)}` : ""}</div></th>`)
+    .join("");
+  return `<div class="chart-block ahead">
+      <h3>${t("Healthy ranges ahead")}</h3>
+      <div class="ahead-wrap"><table class="ahead-table"><thead><tr><th></th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="chart-ref-note">${t("Forecast: per-day metrics assume the last 7 days continue; weight and height keep tracking the same WHO growth percentile. Healthy ranges are the guidance for the baby's age on each date.")}</div>
+    </div>`;
 }
 
 async function loadStats(explicitKey) {
-  const typeSelect = document.getElementById("stats-type");
-  if (typeSelect.options.length === 0) {
-    typeSelect.addEventListener("change", () => loadStats());
-    document.getElementById("stats-days").addEventListener("change", () => loadStats());
-  }
-  if (typeSelect.options.length === 0 || typeSelect.dataset.lang !== state.lang) {
-    const selected = typeSelect.value;
-    typeSelect.querySelectorAll("option").forEach((o) => o.remove());
-    state.choreTypes.forEach((ct) => {
-      const opt = document.createElement("option");
-      opt.value = ct.key;
-      opt.textContent = `${ct.icon} ${t(ct.label)}`;
-      typeSelect.appendChild(opt);
-    });
-    typeSelect.dataset.lang = state.lang;
-    if (selected) typeSelect.value = selected;
-  }
-  const key = explicitKey || typeSelect.value || state.choreTypes[0]?.key;
-  if (!key) return;
-  typeSelect.value = key;
-  const days = document.getElementById("stats-days").value;
-  const query = days === "all" ? "all_time=true" : `days=${days}`;
+  const s = state.stats;
+  if (explicitKey) s.key = explicitKey;
+  if (!s.key || !choreType(s.key)) s.key = state.choreTypes[0]?.key;
+  if (!s.key) return;
+  renderStatsControls();
+
+  const ct = choreType(s.key);
+  const query = `${s.days === "all" ? "all_time=true" : `days=${s.days}`}&forecast_days=${s.forecast}`;
   const requestToken = (state.statsRequestToken = (state.statsRequestToken || 0) + 1);
-  const data = await api(`/api/stats/${key}?${query}`);
+  const notice = document.getElementById("stats-notice");
+  const insights = document.getElementById("stats-insights");
+  const ahead = document.getElementById("stats-ahead");
+  const charts = document.getElementById("stats-charts");
+  charts.innerHTML = `<p class="muted-note">${t("Loading…")}</p>`;
+
+  const data = await api(`/api/stats/${s.key}?${query}`);
   if (requestToken !== state.statsRequestToken) return; // a newer request superseded this one
 
-  const summary = document.getElementById("stats-summary");
-  summary.innerHTML = `
-    <div class="stat-box"><div class="num">${data.total_events}</div><div class="lbl">${t("events")}</div></div>
-    ${data.avg_interval_minutes ? `<div class="stat-box"><div class="num">${(data.avg_interval_minutes / 60).toFixed(1)}h</div><div class="lbl">${t("avg interval")}</div></div>` : ""}
-  `;
-
-  const charts = document.getElementById("stats-charts");
-  if (!data.days.length && !(data.growth_rate && data.growth_rate.length)) {
-    charts.innerHTML = `<p style="color:var(--muted)">${t("No data for this period.")}</p>`;
-    return;
+  // --- notices: what would unlock more information ---
+  const notes = [];
+  if (data.has_guidance && data.age_days == null) {
+    notes.push(t("Set the baby's birth date in Settings to see healthy ranges and forecasts."));
+  } else if (!data.sex && Object.keys(data.latest || {}).some((n) => hasRef(data, n))) {
+    notes.push(t("Set the baby's sex in Settings for a tighter growth range and the exact WHO percentile."));
   }
+  notice.innerHTML = notes.map((n) => `<div class="stats-notice">${n}</div>`).join("");
 
-  function refFooter(refInfo) {
-    if (!refInfo) return "";
-    const src = refInfo.source_label
-      ? ` &middot; ${t("typical range per")} <a href="${refInfo.source_url}" target="_blank" rel="noopener">${refInfo.source_label}</a>`
-      : "";
-    return `<div class="chart-ref-note">${t("Shaded band = commonly-cited normal range")}${src}. ${t("General guidance only, not medical advice.")}</div>`;
-  }
+  const names = metricNames(ct, data);
+  const metrics = names
+    .map((n) => ({ name: n, meta: metricMeta(ct, n) }))
+    .map((m) => ({ ...m, sum: metricSummary(data, m.name, m.meta), ref: hasRef(data, m.name) }));
+  // metrics with a healthy range first - they're the informative ones
+  metrics.sort((a, b) => Number(b.ref) - Number(a.ref));
 
-  const statCt = choreType(key);
-  let html = "";
-  if (data.days.length) {
-    html += `<div class="chart-block"><h3>${t("Events per day")}</h3>${svgSeriesChart(
-      data.days.map((d) => ({ date: d.date, value: d.count, ageDays: d.age_days })),
-      "var(--primary)"
-    )}</div>`;
-    data.numeric_fields.forEach((f) => {
-      // weight_g gets the richer date-scaled chart with trend + ideal band instead
-      if (key === "weight" && f === "weight_g") return;
-      const points = data.days.map((d) => ({
-        date: d.date,
-        value: d[f],
-        ageDays: d.age_days,
-        refMin: d[`${f}_ref_min`],
-        refMax: d[`${f}_ref_max`],
-      }));
-      const refInfo = data.days.find((d) => d[`${f}_ref_source_label`]);
-      const refMeta = refInfo
-        ? { source_label: refInfo[`${f}_ref_source_label`], source_url: refInfo[`${f}_ref_source_url`] }
-        : null;
-      const fieldDef = statCt && statCt.fields.find((x) => x.name === f);
-      const heading = fieldDef ? t(fieldDef.label) : f.replace(/_/g, " ");
-      html += `<div class="chart-block"><h3>${heading}</h3>${svgSeriesChart(points, "var(--ok)")}${refFooter(refMeta)}</div>`;
+  // --- at a glance ---
+  const cards = metrics.filter((m) => m.sum && (m.ref || m.sum.kind === "avg")).map(insightCardHtml);
+  const evLine = `<div class="insight-summary">${data.total_events} ${t("events")}${data.avg_interval_minutes ? ` · ${t("avg interval")} ${(data.avg_interval_minutes / 60).toFixed(1)}h` : ""}</div>`;
+  insights.innerHTML = `${evLine}${cards.length ? `<div class="insight-grid">${cards.join("")}</div>` : ""}`;
+
+  // --- healthy ranges ahead ---
+  ahead.innerHTML = Number(s.forecast) > 0 ? aheadTableHtml(data, ct, metrics) : "";
+
+  // --- charts ---
+  charts.innerHTML = "";
+  let drawn = 0;
+  metrics.forEach((m) => {
+    const points = data.days.map((d) => ({
+      date: d.date,
+      value: m.name === "count" ? d.count : d[m.name],
+      refMin: d[`${m.name}_ref_min`],
+      refMax: d[`${m.name}_ref_max`],
+      refMid: d[`${m.name}_ref_mid`],
+      partial: d.partial,
+      future: d.future,
+      age_days: d.age_days,
+    }));
+    const forecast = (data.forecast && data.forecast[m.name]) || [];
+    // skip metrics with nothing to show (e.g. an all-empty optional field)
+    // ("events per day" is all zeros when nothing was logged - not worth a chart)
+    const hasValues = m.name === "count" ? data.total_events > 0 : points.some((p) => p.value != null);
+    if (!hasValues && !points.some((p) => p.refMin != null) && !forecast.length) return;
+    if (!hasValues && data.total_events === 0 && m.name === "count") return;
+    const el = buildChart({
+      meta: m.meta,
+      points,
+      forecast,
+      today: data.today,
+      refSource: data.references && data.references[m.name],
     });
-  }
-
-  if (key === "weight" && (data.days.some((d) => d.weight_g != null) || (data.trend && data.trend.length))) {
-    const actual = data.days.filter((d) => d.weight_g != null).map((d) => ({ date: d.date, value: d.weight_g }));
-    const trend = data.trend || [];
-    const ideal = data.ideal || [];
-    const idealLow = ideal.map((p) => ({ date: p.date, value: p.low }));
-    const idealHigh = ideal.map((p) => ({ date: p.date, value: p.high }));
-    const legend = `<div class="chart-legend">
-        <span><i class="dot" style="background:var(--ok)"></i>${t("Actual weight")}</span>
-        <span><i class="dot" style="background:var(--primary)"></i>${t("Trend (dashed = projected)")}</span>
-        <span><i class="dot band"></i>${t("Ideal range (age-based)")}</span>
-      </div>`;
-    html = `<div class="chart-block"><h3>${t("Weight over time")}</h3>${svgLineChart({ actual, trend, idealLow, idealHigh, unit: "g" })}${legend}${refFooter({
-      source_label: "WHO weight-for-age growth guidance",
-      source_url: "https://www.mayoclinic.org/healthy-lifestyle/infant-and-toddler-health/expert-answers/infant-growth/faq-20058037",
-    })}</div>` + html;
-  }
+    if (el) {
+      charts.appendChild(el);
+      drawn++;
+    }
+  });
 
   if (data.growth_rate && data.growth_rate.length) {
-    const points = data.growth_rate.map((r) => ({
-      date: r.date,
-      value: r.g_per_day,
-      refMin: r.ref_min,
-      refMax: r.ref_max,
-    }));
-    const refEntry = data.growth_rate.find((r) => r.ref_source_label);
-    const refMeta = refEntry ? { source_label: refEntry.ref_source_label, source_url: refEntry.ref_source_url } : null;
-    html += `<div class="chart-block"><h3>${t("Weight gain (g/day, between weigh-ins)")}</h3>${svgSeriesChart(points, "var(--primary)")}${refFooter(refMeta)}</div>`;
+    const points = data.growth_rate.map((r) => ({ date: r.date, value: r.g_per_day, refMin: r.ref_min, refMax: r.ref_max }));
+    const src = data.growth_rate.find((r) => r.ref_source_label);
+    const meta = {
+      name: "g_per_day", label: t("Weight gain (g/day, between weigh-ins)"), unit: "", scale: 1, zeroBased: false, last: false,
+      fmt: (v) => `${round1(v)} g/day`,
+      axisFmt: (v) => `${round1(v)}`,
+      range: (a, b) => `${round1(a)}–${round1(b)} g/day`,
+    };
+    const el = buildChart({
+      title: meta.label,
+      meta,
+      points,
+      today: data.today,
+      refSource: src ? { source_label: src.ref_source_label, source_url: src.ref_source_url } : null,
+    });
+    if (el) {
+      charts.appendChild(el);
+      drawn++;
+    }
   }
+  if (!drawn) charts.innerHTML = `<p class="muted-note">${t("No data for this period.")}</p>`;
 
-  charts.innerHTML = html;
-
-  if (key === "feeding") {
+  const calc = document.getElementById("calculator-box");
+  if (s.key === "feeding") {
     loadFeedingCalculator();
-    document.getElementById("calculator-box").classList.remove("hidden");
+    calc.classList.remove("hidden");
   } else {
-    document.getElementById("calculator-box").classList.add("hidden");
+    calc.classList.add("hidden");
   }
 }
 
@@ -1712,9 +2171,9 @@ async function loadFeedingCalculator(overrides = {}) {
   try {
     data = await api(`/api/calculators/feeding${params.toString() ? "?" + params.toString() : ""}`);
   } catch (err) {
-    box.innerHTML = `<div class="chart-block"><h3>🍽️ Feeding calculator</h3><p style="color:var(--muted)">Set a birth date in Settings to use the calculator, or enter an age below.</p>
-      <div class="row"><label>Age (days) <input type="number" min="0" id="calc-age" style="width:80px"></label>
-      <button class="btn secondary" id="calc-recalc">Calculate</button></div></div>`;
+    box.innerHTML = `<div class="chart-block"><h3>🍽️ ${t("Feeding calculator")}</h3><p style="color:var(--muted)">${t("Set a birth date in Settings to use the calculator, or enter an age below.")}</p>
+      <div class="row"><label>${t("Age (days)")} <input type="number" min="0" id="calc-age" style="width:80px"></label>
+      <button class="btn secondary" id="calc-recalc">${t("Calculate")}</button></div></div>`;
     document.getElementById("calc-recalc").addEventListener("click", () => {
       loadFeedingCalculator({ age_days: document.getElementById("calc-age").value });
     });
@@ -1724,25 +2183,25 @@ async function loadFeedingCalculator(overrides = {}) {
   const formula = data.formula_weight_based;
   box.innerHTML = `
     <div class="chart-block">
-      <h3>🍽️ Feeding calculator</h3>
+      <h3>🍽️ ${t("Feeding calculator")}</h3>
       <div class="row calc-inputs">
-        <label>Age (days) <input type="number" min="0" id="calc-age" value="${data.age_days ?? ""}" style="width:80px"></label>
-        <label>Weight (g) <input type="number" min="0" id="calc-weight" value="${data.weight_g ?? ""}" style="width:90px"></label>
-        <button class="btn secondary" id="calc-recalc">Recalculate</button>
+        <label>${t("Age (days)")} <input type="number" min="0" id="calc-age" value="${data.age_days ?? ""}" style="width:80px"></label>
+        <label>${t("Weight (g)")} <input type="number" min="0" id="calc-weight" value="${data.weight_g ?? ""}" style="width:90px"></label>
+        <button class="btn secondary" id="calc-recalc">${t("Recalculate")}</button>
       </div>
       <div class="stats-summary">
-        <div class="stat-box"><div class="num">${data.per_feed_ml.min}–${data.per_feed_ml.max}<span class="unit">ml</span></div><div class="lbl">per feed</div></div>
-        <div class="stat-box"><div class="num">${data.per_day_ml.min}–${data.per_day_ml.max}<span class="unit">ml</span></div><div class="lbl">per day</div></div>
-        <div class="stat-box"><div class="num">${data.feeds_per_day.min}–${data.feeds_per_day.max}</div><div class="lbl">feeds/day</div></div>
-        <div class="stat-box"><div class="num">${data.interval_hours.min}–${data.interval_hours.max}h</div><div class="lbl">suggested interval</div></div>
+        <div class="stat-box"><div class="num">${data.per_feed_ml.min}–${data.per_feed_ml.max}<span class="unit">ml</span></div><div class="lbl">${t("per feed")}</div></div>
+        <div class="stat-box"><div class="num">${data.per_day_ml.min}–${data.per_day_ml.max}<span class="unit">ml</span></div><div class="lbl">${t("per day")}</div></div>
+        <div class="stat-box"><div class="num">${data.feeds_per_day.min}–${data.feeds_per_day.max}</div><div class="lbl">${t("feeds/day")}</div></div>
+        <div class="stat-box"><div class="num">${data.interval_hours.min}–${data.interval_hours.max}h</div><div class="lbl">${t("suggested interval")}</div></div>
       </div>
       ${
         formula
-          ? `<div class="chart-ref-note">Formula (weight-based rule): ~${formula.per_day_ml}ml/day (~${formula.per_feed_ml}ml/feed) &middot; ${formula.basis}</div>`
+          ? `<div class="chart-ref-note">${t("Formula (weight-based rule)")}: ~${formula.per_day_ml}ml/${t("day")} (~${formula.per_feed_ml}ml/${t("feed")}) &middot; ${formula.basis}</div>`
           : ""
       }
       ${data.note ? `<div class="chart-ref-note">${data.note}</div>` : ""}
-      <div class="chart-ref-note">Sources: ${data.sources.map((s) => `<a href="${s.url}" target="_blank" rel="noopener">${s.label}</a>`).join(" &middot; ")}. General guidance only, not medical advice - every baby is different.</div>
+      <div class="chart-ref-note">${t("Sources:")} ${data.sources.map((s) => `<a href="${s.url}" target="_blank" rel="noopener">${s.label}</a>`).join(" &middot; ")}. ${t("General guidance only, not medical advice - every baby is different.")}</div>
     </div>`;
   document.getElementById("calc-recalc").addEventListener("click", () => {
     loadFeedingCalculator({
@@ -1789,6 +2248,13 @@ async function loadProfile() {
         <label>${t("Name")} <input type="text" id="profile-name" style="width:120px" value="${p.name || ""}"></label>
         <label>${t("Birth date")} <input type="date" id="profile-birthdate" value="${p.birth_date || ""}"></label>
         <label>${t("Birth weight (g)")} <input type="number" min="0" id="profile-birthweight" style="width:100px" value="${p.birth_weight_g ?? ""}"></label>
+        <label title="${t("Picks the exact WHO growth curves; if not set, the healthy range spans both.")}">${t("Sex")}
+          <select id="profile-sex" style="width:130px">
+            <option value="">${t("Not specified")}</option>
+            <option value="girl" ${p.sex === "girl" ? "selected" : ""}>${t("Girl")}</option>
+            <option value="boy" ${p.sex === "boy" ? "selected" : ""}>${t("Boy")}</option>
+          </select>
+        </label>
         <label>${t("Timezone")} <span class="readonly-value" title="${t("Auto-detected from your device")}">${p.timezone} 🌐</span></label>
         <button class="btn secondary" id="save-profile-btn">${t("Save")}</button>
       </div>
@@ -1802,6 +2268,7 @@ async function loadProfile() {
           name: document.getElementById("profile-name").value || null,
           birth_date: document.getElementById("profile-birthdate").value || null,
           birth_weight_g: bw === "" ? null : Number(bw),
+          sex: document.getElementById("profile-sex").value || null,
         }),
       });
       toast("Saved");
@@ -2463,12 +2930,9 @@ langSwitcher.addEventListener("change", (e) => setLang(e.target.value));
 applyStaticTranslations();
 
 // stats period (days) persists across visits, same as language
-const statsDaysSelect = document.getElementById("stats-days");
-const savedStatsDays = getCookie("bm_stats_days");
-if (savedStatsDays && [...statsDaysSelect.options].some((o) => o.value === savedStatsDays)) {
-  statsDaysSelect.value = savedStatsDays;
-}
-statsDaysSelect.addEventListener("change", () => setCookie("bm_stats_days", statsDaysSelect.value));
+// stats period/forecast come from cookies (see state.stats); fall back if a stale value is stored
+if (!STATS_PERIODS.some((c) => c.v === state.stats.days)) state.stats.days = "90";
+if (!STATS_FORECASTS.some((c) => c.v === state.stats.forecast)) state.stats.forecast = "0";
 
 const competitionDaysSelect = document.getElementById("competition-days");
 const savedCompetitionDays = getCookie("bm_competition_days");

@@ -496,7 +496,7 @@ textarea { min-height: 3.5rem; resize: vertical; }
 .sparkline-empty { color: var(--muted); font-size: 0.75rem; }
 
 .chart-block { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.9rem 1.1rem; margin-bottom: 1rem; overflow-x: auto; box-shadow: var(--shadow-sm); }
-.chart-block h3 { margin: 0 0 0.6rem; font-size: 0.92rem; font-weight: 700; text-transform: capitalize; }
+.chart-block h3 { margin: 0 0 0.6rem; font-size: 0.92rem; font-weight: 700; }
 .chart-ref-note { font-size: 0.72rem; color: var(--muted); margin-top: 0.4rem; }
 .chart-ref-note a { color: inherit; }
 
@@ -719,3 +719,134 @@ textarea { min-height: 3.5rem; resize: vertical; }
 .due-current { font-weight: 600; margin-bottom: 0.9rem; }
 .preset-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .preset-row .btn { flex: 1 1 56px; padding: 0.5rem 0.4rem; }
+
+/* ---------- stats page ---------- */
+:root { --warn-text: color-mix(in srgb, var(--warn) 55%, var(--text)); }
+
+.stats-toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+.stats-toolbar .btn { flex: 0 0 auto; min-height: 38px; padding: 0.4rem 0.8rem; }
+.chip-row {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding: 2px 1px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.chip-row::-webkit-scrollbar { display: none; }
+.stats-toolbar .chip-row { flex: 1 1 auto; min-width: 0; }
+.chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem;
+  min-height: 36px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+}
+.chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+.stats-controls { display: grid; gap: 0.5rem; margin-bottom: 1rem; }
+.control-group { display: flex; align-items: center; gap: 0.6rem; }
+.control-label {
+  flex: 0 0 62px;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.control-group .chip-row { flex: 1 1 auto; min-width: 0; }
+
+.stats-notice {
+  background: color-mix(in srgb, var(--warn) 14%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.8rem;
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: var(--surface-2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.badge.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.badge.low, .badge.high, .badge.warn { color: var(--warn-text); background: color-mix(in srgb, var(--warn) 18%, transparent); }
+
+.insight-summary { color: var(--muted); font-size: 0.82rem; margin-bottom: 0.5rem; }
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+.insight {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.9rem;
+  box-shadow: var(--shadow-sm);
+}
+.insight.ok { border-left-color: var(--ok); }
+.insight.low, .insight.high { border-left-color: var(--warn); }
+.insight-top { display: flex; justify-content: space-between; align-items: center; gap: 0.4rem; }
+.insight-label { font-weight: 600; font-size: 0.88rem; }
+.insight-value { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.02em; margin-top: 0.15rem; }
+.insight-sub { color: var(--muted); font-size: 0.74rem; }
+.insight-extra { font-size: 0.8rem; margin-top: 0.25rem; }
+
+/* charts: fixed y-axis beside a horizontally scrolling plot */
+.chart-block { overflow: hidden; }
+.chart-wrap { display: flex; align-items: stretch; }
+.chart-axis { flex: 0 0 auto; }
+.chart-scroll { flex: 1 1 auto; min-width: 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.chart-plot { display: block; }
+.chart-plot .hit { cursor: crosshair; }
+.chart-unit { color: var(--muted); font-weight: 500; font-size: 0.75rem; margin-left: 0.25rem; text-transform: none; }
+.chart-readout { min-height: 1.5rem; font-size: 0.82rem; margin-top: 0.3rem; }
+.muted { color: var(--muted); }
+.ro-val { font-weight: 700; }
+.ro-val.ok { color: var(--ok); }
+.ro-val.low, .ro-val.high { color: var(--warn-text); }
+.chart-legend .dash { width: 16px; height: 0; border-top: 2px dashed var(--primary); display: inline-block; opacity: 0.8; }
+.chart-legend .dot.hollow { background: var(--surface); border: 2px solid var(--primary); box-sizing: border-box; }
+
+/* healthy ranges ahead */
+.ahead-wrap { overflow-x: auto; }
+.ahead-table { border-collapse: collapse; width: 100%; min-width: 460px; font-size: 0.8rem; }
+.ahead-table th, .ahead-table td { padding: 0.45rem 0.5rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+.ahead-table thead th { font-size: 0.78rem; white-space: nowrap; }
+.ahead-table tbody th { font-weight: 600; white-space: nowrap; position: sticky; left: 0; background: var(--surface); }
+.ah-date { color: var(--muted); font-weight: 400; font-size: 0.68rem; }
+.ah-range { font-weight: 600; white-space: nowrap; }
+.ah-fc { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+.ah-fc.ok { color: var(--ok); }
+.ah-fc.low, .ah-fc.high { color: var(--warn-text); }
+
+/* overview cards, now carrying values against their healthy range */
+.overview-grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.overview-card-head .badge { margin-left: auto; }
+.overview-spark { height: 40px; margin: 0.15rem 0 0.25rem; }
+.ov-row { display: flex; align-items: baseline; gap: 0.4rem; margin-top: 0.3rem; }
+.ov-label { flex: 1 1 auto; font-size: 0.8rem; color: var(--muted); display: flex; flex-direction: column; line-height: 1.15; }
+.ov-when { font-size: 0.65rem; opacity: 0.85; }
+.ov-val { font-weight: 700; font-size: 1rem; }
+.ov-pct { font-size: 0.68rem; color: var(--muted); font-weight: 600; margin-left: 0.2rem; }
+.ov-flag { width: 1.2rem; text-align: center; font-weight: 800; font-size: 0.8rem; }
+.ov-flag.ok { color: var(--ok); }
+.ov-flag.low, .ov-flag.high { color: var(--warn-text); }
+.ov-range { font-size: 0.68rem; color: var(--muted); margin-top: -0.1rem; }

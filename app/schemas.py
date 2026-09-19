@@ -110,6 +110,8 @@ class ProfileOut(BaseModel):
     name: Optional[str] = None
     birth_date: Optional[date] = None
     birth_weight_g: Optional[float] = None
+    # "boy" | "girl" | None - picks the WHO growth curves (unset = both)
+    sex: Optional[str] = None
     timezone: str = "UTC"
     age_days: Optional[int] = None
 
@@ -118,6 +120,7 @@ class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     birth_date: Optional[date] = None
     birth_weight_g: Optional[float] = None
+    sex: Optional[str] = None
     timezone: Optional[str] = None
 
 
