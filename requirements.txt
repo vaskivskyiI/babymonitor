@@ -5,3 +5,4 @@ pydantic==2.9.2
 jinja2==3.1.4
 python-multipart==0.0.9
 tzdata==2024.2
+pywebpush==2.5.0

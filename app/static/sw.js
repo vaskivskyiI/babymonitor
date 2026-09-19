@@ -30,6 +30,41 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// Web Push: the server sends {title, body, tag, url}. The tag is the chore
+// type, so a newer reminder for the same chore replaces the old one instead
+// of stacking up.
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (e) {
+    data = { body: event.data ? event.data.text() : "" };
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title || "Baby Monitor", {
+      body: data.body || "",
+      tag: data.tag || undefined,
+      renotify: !!data.tag,
+      icon: "/static/icon-192.png",
+      badge: "/static/icon-192.png",
+      data: { url: data.url || "/" },
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ("focus" in client) return client.focus();
+      }
+      return self.clients.openWindow(url);
+    })
+  );
+});
+
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET") return; // never intercept writes

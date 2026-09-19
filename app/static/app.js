@@ -160,6 +160,30 @@ const I18N = {
     "Session window": "Вікно сесії",
     "min": "хв",
     "Due once per calendar day": "Раз на календарний день",
+    "Repeat every": "Повторювати кожні",
+    "Reminder off": "Нагадування вимкнено",
+    "Change the next reminder time": "Змінити час наступного нагадування",
+    "Reminder time updated": "Час нагадування змінено",
+    "Reminder reset to default": "Нагадування скинуто до стандартного",
+    "Remind me in": "Нагадати через",
+    "Or at a specific time": "Або в конкретний час",
+    "Set time": "Встановити",
+    "Reset to default": "Скинути до стандартного",
+    // push notifications
+    "Push notifications": "Push-сповіщення",
+    "Push": "Push",
+    "Enable on this device": "Увімкнути на цьому пристрої",
+    "Enabled on this device": "Увімкнено на цьому пристрої",
+    "Disable": "Вимкнути",
+    "Send test": "Надіслати тест",
+    "Test notification sent": "Тестове сповіщення надіслано",
+    "Get a notification on this device when a reminder is due.": "Отримуйте сповіщення на цьому пристрої, коли настає час нагадування.",
+    "Choose which chores notify this device in the list below.": "Оберіть у списку нижче, про які події сповіщати цей пристрій.",
+    "Notifications were not allowed": "Сповіщення не дозволено",
+    "Notifications are blocked for this site - allow them in your browser's site settings.": "Сповіщення для цього сайту заблоковано - дозвольте їх у налаштуваннях сайту в браузері.",
+    "Push notifications need HTTPS (or localhost).": "Push-сповіщення потребують HTTPS (або localhost).",
+    "On iPhone/iPad, add this app to your Home Screen first, then open it from there.": "На iPhone/iPad спочатку додайте застосунок на Початковий екран і відкрийте його звідти.",
+    "This browser doesn't support push notifications.": "Цей браузер не підтримує push-сповіщення.",
     // toasts / errors
     "Error: ": "Помилка: ",
     "Quick action added": "Швидку дію додано",
@@ -223,6 +247,7 @@ function setLang(lang) {
   setCookie("bm_lang", lang);
   document.documentElement.lang = lang;
   applyStaticTranslations();
+  syncPushLang();
   loadDashboard();
   const activeTab = document.querySelector(".tab-btn.active").dataset.tab;
   if (activeTab === "history") loadHistory();
@@ -252,6 +277,7 @@ const state = {
   profile: null,
   lang: getCookie("bm_lang") || detectDefaultLang(),
   people: [],
+  push: null, // this device's push status, see loadPushState()
 };
 
 // This device's default person (cookie, not server-side - each device/
@@ -451,7 +477,15 @@ async function loadDashboard() {
 
     let dueText = "";
     let dueClass = "ok";
-    if (ct && ct.daily_reminder && s.last_event) {
+    const hasReminder = s.interval_minutes != null || (ct && ct.daily_reminder);
+    if (!s.reminder_enabled) {
+      // switched off in Settings - say so (only for chores that have a
+      // reminder to switch off), rather than silently showing nothing
+      if (hasReminder) {
+        dueText = `🔕 ${t("Reminder off")}`;
+        dueClass = "off";
+      }
+    } else if (ct && ct.daily_reminder && s.last_event && !s.next_due_overridden) {
       // "once per day" reminders reset at local midnight, not 24h after the
       // last dose - a live countdown-to-midnight isn't meaningful, so show
       // "Tomorrow" once satisfied, or an overdue-by based on the last dose
@@ -470,14 +504,20 @@ async function loadDashboard() {
       dueClass = s.overdue ? "overdue" : "ok";
       dueText = `${s.overdue ? t("Overdue by") : t("Next")} ${fmtRelative(s.next_due, "in", true)} (${fmtClockTime(s.next_due)})`;
     }
+    if (s.next_due_overridden && s.reminder_enabled) dueText += " ✎";
     // "Set alarm" - only for a real future due time (a plain interval-based
     // reminder, not the daily-reset kind, and not already overdue - there's
     // nothing to count down to at that point).
-    const showAlarm = s.next_due && !s.overdue && !(ct && ct.daily_reminder);
+    const showAlarm = s.next_due && !s.overdue && !(ct && ct.daily_reminder && !s.next_due_overridden);
+    // "Change next time" - whenever there's a live reminder to adjust
+    const showEditDue = s.reminder_enabled && hasReminder;
     const dueHtml = dueText
       ? `<div class="due ${dueClass}">
           <span>${dueText}</span>
-          ${showAlarm ? `<button type="button" class="alarm-btn" data-action="alarm" title="${t("Add a calendar alarm for this")}">🔔</button>` : ""}
+          <span class="due-btns">
+            ${showEditDue ? `<button type="button" class="alarm-btn" data-action="edit-due" title="${t("Change the next reminder time")}">⏱</button>` : ""}
+            ${showAlarm ? `<button type="button" class="alarm-btn" data-action="alarm" title="${t("Add a calendar alarm for this")}">🔔</button>` : ""}
+          </span>
         </div>`
       : "";
 
@@ -541,6 +581,8 @@ async function loadDashboard() {
         e.stopPropagation();
         if (btn.dataset.action === "alarm") {
           downloadAlarmICS(s.label, s.next_due);
+        } else if (btn.dataset.action === "edit-due") {
+          openDueModal(s);
         } else if (btn.dataset.action === "edit-last") {
           editLastEntry(s.chore_type, s.last_event.id);
         } else {
@@ -572,6 +614,84 @@ async function loadDashboard() {
     container.appendChild(card);
   });
 }
+
+// ---------- change next reminder time ----------
+//
+// A one-off override for the current cycle (e.g. a longer gap after a night
+// feed) - it reverts to the normal interval as soon as the next event is
+// logged. The server just stores an absolute instant.
+
+function closeDueModal() {
+  document.getElementById("due-modal-backdrop").classList.add("hidden");
+}
+
+async function setNextDue(key, date) {
+  try {
+    await api(`/api/chore-types/${key}/next-due`, {
+      method: "PUT",
+      body: JSON.stringify({ due_at: date ? date.toISOString() : null }),
+    });
+  } catch (err) {
+    toast(t("Error: ") + err.message);
+    return;
+  }
+  closeDueModal();
+  toast(date ? "Reminder time updated" : "Reminder reset to default");
+  loadDashboard();
+}
+
+function openDueModal(s) {
+  document.getElementById("due-modal-title").textContent = `${s.icon} ${t(s.label)}`;
+  const presets = [30, 60, 120, 180, 240];
+  const presetLabel = (m) => (m < 60 ? `${m}${t("min")}` : `${m / 60}h`);
+  const current = s.next_due
+    ? `${t(s.overdue ? "Overdue by" : "Next")} ${fmtRelative(s.next_due, "in", true)} (${fmtClockTime(s.next_due)})`
+    : "";
+  const body = document.getElementById("due-modal-body");
+  body.innerHTML = `
+    ${current ? `<div class="due-current">${current}</div>` : ""}
+    <div class="field">
+      <label>${t("Remind me in")}</label>
+      <div class="preset-row">
+        ${presets.map((m) => `<button type="button" class="btn secondary" data-min="${m}">${presetLabel(m)}</button>`).join("")}
+      </div>
+    </div>
+    <div class="field">
+      <label>${t("Or at a specific time")}</label>
+      <div class="row">
+        <input type="time" id="due-time" style="flex:1 1 120px">
+        <button type="button" class="btn" id="due-time-set">${t("Set time")}</button>
+      </div>
+    </div>
+    ${s.next_due_overridden ? `<button type="button" class="btn secondary" id="due-reset" style="width:100%">${t("Reset to default")}</button>` : ""}
+  `;
+  const timeInput = body.querySelector("#due-time");
+  if (s.next_due) timeInput.value = fmtClockTime24(new Date(s.next_due));
+  body.querySelectorAll("[data-min]").forEach((btn) =>
+    btn.addEventListener("click", () => setNextDue(s.chore_type, new Date(Date.now() + Number(btn.dataset.min) * 60000)))
+  );
+  body.querySelector("#due-time-set").addEventListener("click", () => {
+    if (!timeInput.value) return;
+    const [hh, mm] = timeInput.value.split(":").map(Number);
+    const at = new Date();
+    at.setHours(hh, mm, 0, 0);
+    if (at <= new Date()) at.setDate(at.getDate() + 1); // that time already passed today -> tomorrow
+    setNextDue(s.chore_type, at);
+  });
+  const reset = body.querySelector("#due-reset");
+  if (reset) reset.addEventListener("click", () => setNextDue(s.chore_type, null));
+  document.getElementById("due-modal-backdrop").classList.remove("hidden");
+}
+
+// "HH:MM" in 24h, as <input type="time"> requires (fmtClockTime is locale-formatted)
+function fmtClockTime24(d) {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+document.getElementById("due-modal-close").addEventListener("click", closeDueModal);
+document.getElementById("due-modal-backdrop").addEventListener("click", (e) => {
+  if (e.target.id === "due-modal-backdrop") closeDueModal();
+});
 
 async function handleCardAction(choreTypeKey, action, targetEventId) {
   if (action === "quick-start") {
@@ -2063,6 +2183,155 @@ async function loadPeopleSettings() {
   devSelect.addEventListener("change", () => setCurrentPersonId(devSelect.value));
 }
 
+// ---------- push notifications ----------
+//
+// Subscription is per device/browser; the server keeps which chore types
+// each device has muted. `state.push` mirrors the server's record for this
+// device: {subscribed, muted_types, endpoint} (null until loaded).
+
+function pushSupported() {
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+// Why push can't work here, as a user-facing hint (null if it can).
+function pushUnsupportedReason() {
+  if (pushSupported()) return null;
+  if (!window.isSecureContext) return "Push notifications need HTTPS (or localhost).";
+  if (/iphone|ipad|ipod/i.test(navigator.userAgent)) {
+    return "On iPhone/iPad, add this app to your Home Screen first, then open it from there.";
+  }
+  return "This browser doesn't support push notifications.";
+}
+
+function urlB64ToBytes(b64) {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+function sameBytes(a, b) {
+  if (!a || a.byteLength !== b.byteLength) return false;
+  const x = new Uint8Array(a);
+  return x.every((v, i) => v === b[i]);
+}
+
+async function browserPushSubscription() {
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+async function registerPushWithServer(sub) {
+  const json = sub.toJSON();
+  const res = await api("/api/push/subscribe", {
+    method: "POST",
+    body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys, lang: state.lang }),
+  });
+  state.push = { ...res, endpoint: json.endpoint };
+}
+
+// Reads this device's push status. If the browser is still subscribed but
+// the server has forgotten it (e.g. the DB was reset), quietly re-register.
+async function loadPushState() {
+  state.push = null;
+  if (!pushSupported() || Notification.permission !== "granted") return;
+  try {
+    const sub = await browserPushSubscription();
+    if (!sub) return;
+    const res = await api("/api/push/state", { method: "POST", body: JSON.stringify({ endpoint: sub.endpoint }) });
+    if (res.subscribed) state.push = { ...res, endpoint: sub.endpoint };
+    else await registerPushWithServer(sub);
+  } catch (err) {
+    state.push = null;
+  }
+}
+
+async function enablePush() {
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    toast(t("Notifications were not allowed"));
+    return;
+  }
+  const { public_key } = await api("/api/push/config");
+  const key = urlB64ToBytes(public_key);
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  // a subscription made against a different server key (fresh database)
+  // can't be reused - the browser refuses a mismatched key
+  if (sub && !sameBytes(sub.options.applicationServerKey, key)) {
+    await sub.unsubscribe();
+    sub = null;
+  }
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+  await registerPushWithServer(sub);
+}
+
+async function disablePush() {
+  const sub = await browserPushSubscription();
+  if (sub) {
+    await api("/api/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint: sub.endpoint }) });
+    await sub.unsubscribe();
+  }
+  state.push = null;
+}
+
+// Keep the notification text language in step with the UI language.
+function syncPushLang() {
+  if (!state.push || !state.push.subscribed) return;
+  api("/api/push/preferences", {
+    method: "PUT",
+    body: JSON.stringify({ endpoint: state.push.endpoint, lang: state.lang }),
+  }).catch(() => {});
+}
+
+function renderPushBox() {
+  const box = document.getElementById("push-box");
+  const reason = pushUnsupportedReason();
+  let inner;
+  if (reason) {
+    inner = `<div class="push-note">${t(reason)}</div>`;
+  } else if (Notification.permission === "denied") {
+    inner = `<div class="push-note">${t("Notifications are blocked for this site - allow them in your browser's site settings.")}</div>`;
+  } else if (state.push && state.push.subscribed) {
+    inner = `
+      <div class="push-status">✅ ${t("Enabled on this device")}</div>
+      <div class="row">
+        <button type="button" class="btn secondary" id="push-test-btn">${t("Send test")}</button>
+        <button type="button" class="btn secondary" id="push-disable-btn">${t("Disable")}</button>
+      </div>
+      <div class="push-note">${t("Choose which chores notify this device in the list below.")}</div>`;
+  } else {
+    inner = `
+      <div class="push-note">${t("Get a notification on this device when a reminder is due.")}</div>
+      <button type="button" class="btn" id="push-enable-btn">${t("Enable on this device")}</button>`;
+  }
+  box.innerHTML = inner;
+
+  const guard = (fn) => async () => {
+    try {
+      await fn();
+    } catch (err) {
+      toast(t("Error: ") + err.message);
+    }
+    renderPushBox();
+    renderReminderRows();
+  };
+  const enableBtn = box.querySelector("#push-enable-btn");
+  if (enableBtn) enableBtn.addEventListener("click", guard(enablePush));
+  const disableBtn = box.querySelector("#push-disable-btn");
+  if (disableBtn) disableBtn.addEventListener("click", guard(disablePush));
+  const testBtn = box.querySelector("#push-test-btn");
+  if (testBtn) {
+    testBtn.addEventListener("click", async () => {
+      try {
+        await api("/api/push/test", { method: "POST", body: JSON.stringify({ endpoint: state.push.endpoint }) });
+        toast("Test notification sent");
+      } catch (err) {
+        toast(t("Error: ") + err.message);
+      }
+    });
+  }
+}
+
 // ---------- settings ----------
 
 async function loadSettings() {
@@ -2070,20 +2339,38 @@ async function loadSettings() {
   await loadPeople();
   loadPeopleSettings();
   await loadChoreTypesManager();
+  await loadPushState();
+  renderPushBox();
+  renderReminderRows();
+}
+
+// One row per chore type: master reminder on/off, the interval, the session
+// window (where it applies), and whether *this device* gets pushes for it.
+function renderReminderRows() {
   const list = document.getElementById("settings-list");
   list.innerHTML = "";
+  const pushOn = !!(state.push && state.push.subscribed);
   state.choreTypes.forEach((ct) => {
+    const hasReminder = ct.interval_configurable || ct.daily_reminder;
+    const muted = new Set((state.push && state.push.muted_types) || []);
     const row = document.createElement("div");
-    row.className = "settings-row";
+    row.className = "settings-row reminder-row";
     row.innerHTML = `
-      <div>${ct.icon} <strong>${t(ct.label)}</strong></div>
-      <div class="row">
+      <div class="reminder-head">
+        <div>${ct.icon} <strong>${t(ct.label)}</strong></div>
+        ${
+          hasReminder
+            ? `<label class="switch-label"><input type="checkbox" class="reminder-toggle" ${ct.reminder_enabled ? "checked" : ""}> ${t("Reminder")}</label>`
+            : `<span style="color:var(--muted)">${t("no reminder")}</span>`
+        }
+      </div>
+      <div class="row reminder-controls ${hasReminder && !ct.reminder_enabled ? "dimmed" : ""}">
         ${
           ct.interval_configurable
-            ? `<label>${t("Reminder")} <input type="number" min="0" class="interval-input" style="width:92px" value="${ct.interval_minutes ?? ""}"> ${t("min")}</label>`
+            ? `<label>${t("Repeat every")} <input type="number" min="0" class="interval-input" style="width:92px" value="${ct.interval_minutes ?? ""}"> ${t("min")}</label>`
             : ct.fixed_reminder_note
               ? `<span style="color:var(--muted)">${t(ct.fixed_reminder_note)}</span>`
-              : `<span style="color:var(--muted)">${t("no reminder")}</span>`
+              : ""
         }
         ${
           ct.session_window_configurable
@@ -2095,25 +2382,68 @@ async function loadSettings() {
             ? `<button class="btn secondary save-settings-btn">${t("Save")}</button>`
             : ""
         }
+        ${
+          pushOn && hasReminder
+            ? `<label class="switch-label push-toggle"><input type="checkbox" ${muted.has(ct.key) ? "" : "checked"}> 🔔 ${t("Push")}</label>`
+            : ""
+        }
       </div>`;
-    if (!ct.interval_configurable && !ct.session_window_configurable) {
-      list.appendChild(row);
-      return;
-    }
-    row.querySelector(".save-settings-btn").addEventListener("click", async () => {
-      const intervalInput = row.querySelector(".interval-input");
-      const sessionInput = row.querySelector(".session-window-input");
-      await api(`/api/chore-types/${ct.key}/settings`, {
-        method: "PUT",
-        body: JSON.stringify({
-          interval_minutes: intervalInput && intervalInput.value !== "" ? Number(intervalInput.value) : null,
-          session_window_minutes: sessionInput && sessionInput.value !== "" ? Number(sessionInput.value) : null,
-        }),
+
+    const reminderToggle = row.querySelector(".reminder-toggle");
+    if (reminderToggle) {
+      reminderToggle.addEventListener("change", async () => {
+        try {
+          await api(`/api/chore-types/${ct.key}/settings`, {
+            method: "PUT",
+            body: JSON.stringify({ reminder_enabled: reminderToggle.checked }),
+          });
+        } catch (err) {
+          reminderToggle.checked = !reminderToggle.checked;
+          toast(t("Error: ") + err.message);
+          return;
+        }
+        row.querySelector(".reminder-controls").classList.toggle("dimmed", !reminderToggle.checked);
+        toast("Saved");
+        await loadChoreTypes();
+        loadDashboard();
       });
-      toast("Saved");
-      await loadChoreTypes();
-      loadDashboard();
-    });
+    }
+
+    const saveBtn = row.querySelector(".save-settings-btn");
+    if (saveBtn) {
+      saveBtn.addEventListener("click", async () => {
+        const intervalInput = row.querySelector(".interval-input");
+        const sessionInput = row.querySelector(".session-window-input");
+        // only send what this row actually has, so saving one never resets the other
+        const body = {};
+        if (intervalInput) body.interval_minutes = intervalInput.value !== "" ? Number(intervalInput.value) : null;
+        if (sessionInput) body.session_window_minutes = sessionInput.value !== "" ? Number(sessionInput.value) : null;
+        await api(`/api/chore-types/${ct.key}/settings`, { method: "PUT", body: JSON.stringify(body) });
+        toast("Saved");
+        await loadChoreTypes();
+        loadDashboard();
+      });
+    }
+
+    const pushToggle = row.querySelector(".push-toggle input");
+    if (pushToggle) {
+      pushToggle.addEventListener("change", async () => {
+        const next = new Set((state.push && state.push.muted_types) || []);
+        if (pushToggle.checked) next.delete(ct.key);
+        else next.add(ct.key);
+        try {
+          const res = await api("/api/push/preferences", {
+            method: "PUT",
+            body: JSON.stringify({ endpoint: state.push.endpoint, muted_types: [...next] }),
+          });
+          state.push = { ...res, endpoint: state.push.endpoint };
+          toast("Saved");
+        } catch (err) {
+          pushToggle.checked = !pushToggle.checked;
+          toast(t("Error: ") + err.message);
+        }
+      });
+    }
     list.appendChild(row);
   });
 }

@@ -59,6 +59,23 @@ class Setting(Base):
     value: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class PushSubscription(Base):
+    """A browser/device registered for Web Push (one row per push endpoint).
+    Which categories notify is per device: `muted_types` lists chore-type
+    keys this device does NOT want pushes for - a blacklist, so chore types
+    added later notify by default instead of silently staying off."""
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    endpoint: Mapped[str] = mapped_column(Text, unique=True)
+    p256dh: Mapped[str] = mapped_column(String(255))
+    auth: Mapped[str] = mapped_column(String(255))
+    lang: Mapped[str] = mapped_column(String(8), default="en")
+    muted_types: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ChoreTypeMeta(Base):
     """Per-chore-type display/ordering overrides - applies to both builtin
     (Python-defined) and custom (user-defined) chore types."""

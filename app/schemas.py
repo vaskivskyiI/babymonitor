@@ -58,6 +58,13 @@ class PersonOut(BaseModel):
 class SettingsUpdate(BaseModel):
     interval_minutes: Optional[int] = None
     session_window_minutes: Optional[int] = None
+    # master reminder on/off; omitted = leave as is
+    reminder_enabled: Optional[bool] = None
+
+
+class NextDueUpdate(BaseModel):
+    # None clears the one-off override and goes back to the normal interval
+    due_at: Optional[datetime] = None
 
 
 class StatusOut(BaseModel):
@@ -66,11 +73,37 @@ class StatusOut(BaseModel):
     icon: str
     last_event: Optional[EventOut] = None
     next_due: Optional[datetime] = None
+    # true when next_due was set by hand for this cycle rather than derived
+    # from the interval
+    next_due_overridden: bool = False
+    reminder_enabled: bool = True
     interval_minutes: Optional[int] = None
     overdue: bool = False
     active_session_event_id: Optional[int] = None
     open_event_id: Optional[int] = None
     today: dict[str, float] = {}
+
+
+class PushKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscribe(BaseModel):
+    endpoint: str
+    keys: PushKeys
+    lang: Optional[str] = None
+
+
+class PushEndpoint(BaseModel):
+    endpoint: str
+
+
+class PushPreferences(BaseModel):
+    endpoint: str
+    # chore-type keys this device should NOT get pushes for
+    muted_types: Optional[list[str]] = None
+    lang: Optional[str] = None
 
 
 class ProfileOut(BaseModel):

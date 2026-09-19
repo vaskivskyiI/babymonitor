@@ -73,6 +73,7 @@ podman run -d \
   --health-retries 3 \
   --health-start-period 10s \
   -e TZ="$TZ" \
+  ${VAPID_SUBJECT:+-e VAPID_SUBJECT="$VAPID_SUBJECT"} \
   -v "$DATA_DIR:/data:Z" \
   -v /etc/localtime:/etc/localtime:ro \
   "$IMAGE"

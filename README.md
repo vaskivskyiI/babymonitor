@@ -70,6 +70,30 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   to a "Next due" time to download a calendar event with an alarm at
   that moment - works on any phone via its own Calendar app, no push
   infrastructure or HTTPS required.
+- **Push notifications** when a reminder comes due: Settings → Push
+  notifications → "Enable on this device". Each device chooses which
+  chores it gets pushes for (a per-chore "🔔 Push" checkbox under
+  Reminders), so e.g. one phone can be feeding-only. The server checks
+  every 30 seconds and sends one notification per due time, in the
+  language the device is set to (EN/UK); a due time that passed more than
+  30 minutes ago is skipped, so turning reminders on or restarting the
+  server never dumps a pile of old alerts. **Requires HTTPS** (browsers
+  only allow push on `https://` or `localhost` - e.g. put the app behind a
+  reverse proxy or Tailscale HTTPS), and on iPhone/iPad the app must be
+  added to the Home Screen first (iOS 16.4+). The server's VAPID keys are
+  generated on first start and stored in the database; if a push service
+  rejects the placeholder contact address, set `VAPID_SUBJECT`
+  (see `babymonitor.env`).
+- **Reminders on/off and per-cycle timing**: every chore's reminder has
+  an on/off switch in Settings → Reminders (turning it off keeps the
+  interval, and hides the "Next" time and stops the pushes). On the
+  dashboard, ⏱ next to the "Next" time lets you change *this one* due
+  time - "in 30 min / 1 h / 2 h / 3 h / 4 h" from now, or at a specific
+  clock time - e.g. a longer gap after a night feed. It's marked ✎ and
+  reverts to the normal interval as soon as the next event is logged (or
+  if you change that chore's interval). Probiotic's due time is local
+  midnight, so its push arrives then; switch it off or move it with ⏱ if
+  that's unwelcome.
 - **Baby info bar**: the Dashboard leads with the baby's name, current
   age, latest weight and latest height at a glance.
 - **Add your own chore types from the app** - no code required. Settings
@@ -417,7 +441,9 @@ done in the app's Settings tab.
 - `POST /api/chore-types/reorder` - `{keys: [...]}` in the desired display order
 - `DELETE /api/chore-types/{key}` - delete a custom chore type and its events (built-ins can only be disabled)
 - `POST /api/chore-types/{key}/quick-actions` / `PUT .../{action_id}` / `DELETE .../{action_id}` - manage configurable quick actions for entries-based chore types: `{label, mode: "increment"|"absolute"|"log", match_field, match_value, target_field?, value?}` - mode `"log"` (target_field/value unused) just appends a new checkpoint stamped `match_field: match_value`, e.g. feeding's default Breast/Formula/Pumped buttons
-- `PUT /api/chore-types/{key}/settings` - set reminder interval / session window (minutes)
+- `PUT /api/chore-types/{key}/settings` - partial update of `{interval_minutes?, session_window_minutes?, reminder_enabled?}`; only the fields you send change
+- `PUT /api/chore-types/{key}/next-due` - `{due_at}` overrides the next reminder time for the current cycle only (`null` clears it); reverts once the next event is logged. `GET /api/status` reports `next_due_overridden` and `reminder_enabled` (`next_due` is `null` while a reminder is off)
+- `GET /api/push/config` (VAPID public key), `POST /api/push/subscribe` / `POST /api/push/unsubscribe` / `POST /api/push/state` / `PUT /api/push/preferences` `{endpoint, muted_types?, lang?}` / `POST /api/push/test` - Web Push device registration and per-device chore choices
 - `GET /api/profile` / `PUT /api/profile` (partial updates supported) - baby's name, birth date, birth weight, timezone (auto-synced from the browser; drives age display and day-bucketing)
 - `GET /api/people` / `POST /api/people` / `PUT /api/people/{id}` / `DELETE /api/people/{id}` - manage household members events can be attributed to; deleting one unassigns (not deletes) their past events
 - `POST /api/events` - log an event `{chore_type, timestamp?, data, notes?, person_id?}`

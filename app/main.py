@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from fastapi import FastAPI, Request
@@ -9,11 +10,14 @@ from app.api import router as api_router
 from app.chore_types.base import REGISTRY, load_builtin_types
 from app.db import SessionLocal, init_db
 from app.models import ChoreTypeMeta, QuickActionDef
+from app.push import ensure_vapid_keys, reminder_loop
+from app.push import router as push_router
 
 load_builtin_types()
 
 app = FastAPI(title="Baby Monitor")
 app.include_router(api_router)
+app.include_router(push_router)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
@@ -78,10 +82,13 @@ def _seed_feeding_quick_actions() -> None:
 
 
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     init_db()
     _seed_chore_type_order()
     _seed_feeding_quick_actions()
+    ensure_vapid_keys()
+    # keep a reference so the loop isn't garbage-collected
+    app.state.reminder_task = asyncio.create_task(reminder_loop())
 
 
 @app.get("/", response_class=HTMLResponse)

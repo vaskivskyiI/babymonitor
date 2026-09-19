@@ -20,6 +20,7 @@ from app.schemas import (
     EventCreate,
     EventOut,
     EventUpdate,
+    NextDueUpdate,
     PersonCreate,
     PersonOut,
     PersonUpdate,
@@ -112,6 +113,47 @@ def _interval_minutes(db: Session, ct) -> int | None:
     if setting and setting.value and "interval_minutes" in setting.value:
         return setting.value["interval_minutes"]
     return ct.default_interval_minutes
+
+
+def _reminder_enabled(db: Session, key: str) -> bool:
+    """Master on/off for a chore type's reminder, independent of its interval
+    (so turning it off keeps the configured interval for when it's turned
+    back on). Defaults to on."""
+    setting = db.get(Setting, f"reminder:{key}")
+    if setting and setting.value and "enabled" in setting.value:
+        return bool(setting.value["enabled"])
+    return True
+
+
+def _last_event(db: Session, key: str) -> Event | None:
+    stmt = select(Event).where(Event.chore_type == key).order_by(Event.timestamp.desc()).limit(1)
+    return db.execute(stmt).scalars().first()
+
+
+def _next_due_override(db: Session, key: str, last: Event | None) -> datetime | None:
+    """A one-off "remind me at X instead" for the current cycle (e.g. a
+    longer gap after a night feed). It's tied to the event it was set for,
+    so logging the next event drops it and the normal interval applies again."""
+    setting = db.get(Setting, f"next_due_override:{key}")
+    if not setting or not setting.value:
+        return None
+    if setting.value.get("event_id") != (last.id if last else None):
+        return None
+    try:
+        return as_utc(datetime.fromisoformat(setting.value["due_at"]))
+    except (KeyError, ValueError):
+        return None
+
+
+def _compute_next_due(db: Session, ct, last: Event | None, tz: ZoneInfo) -> tuple[datetime | None, bool]:
+    """(next_due, is_overridden). None when the reminder is switched off."""
+    if not _reminder_enabled(db, ct.key):
+        return None, False
+    override = _next_due_override(db, ct.key, last)
+    if override is not None:
+        return override, True
+    last_ts = as_utc(last.timestamp) if last else None
+    return ct.next_due(last_ts, _interval_minutes(db, ct), tz), False
 
 
 def _session_window_minutes(db: Session, ct) -> int | None:
@@ -297,6 +339,7 @@ def list_chore_types(include_disabled: bool = False, db: Session = Depends(get_d
         d["quick_actions"] = list(d.get("quick_actions") or []) + _configured_quick_actions(db, ct.key)
         d["is_builtin"] = ct.key in REGISTRY
         d["enabled"] = metas[ct.key].enabled if ct.key in metas else True
+        d["reminder_enabled"] = _reminder_enabled(db, ct.key)
         result.append(d)
     return result
 
@@ -436,13 +479,49 @@ def delete_custom_chore_type(key: str, db: Session = Depends(get_db)):
 @router.put("/chore-types/{key}/settings")
 def update_settings(key: str, body: SettingsUpdate, db: Session = Depends(get_db)):
     ct = _get_chore_type(key, db)
-    _set_setting(db, f"interval:{ct.key}", {"interval_minutes": body.interval_minutes})
-    if ct.session_window_configurable:
+    # partial update: only fields the client actually sent are touched, so
+    # e.g. toggling reminder_enabled never resets the interval
+    fields_set = body.model_fields_set
+    if "interval_minutes" in fields_set:
+        if body.interval_minutes != _interval_minutes(db, ct):
+            # a new interval should take effect right away, not be shadowed
+            # by an older one-off next-due override
+            override = db.get(Setting, f"next_due_override:{ct.key}")
+            if override is not None:
+                db.delete(override)
+        _set_setting(db, f"interval:{ct.key}", {"interval_minutes": body.interval_minutes})
+    if ct.session_window_configurable and "session_window_minutes" in fields_set:
         _set_setting(
             db, f"session_window:{ct.key}", {"session_window_minutes": body.session_window_minutes}
         )
+    if body.reminder_enabled is not None:
+        _set_setting(db, f"reminder:{ct.key}", {"enabled": body.reminder_enabled})
     db.commit()
-    return ct.as_dict(_interval_minutes(db, ct), _session_window_minutes(db, ct))
+    d = ct.as_dict(_interval_minutes(db, ct), _session_window_minutes(db, ct))
+    d["reminder_enabled"] = _reminder_enabled(db, ct.key)
+    return d
+
+
+@router.put("/chore-types/{key}/next-due", response_model=StatusOut)
+def update_next_due(key: str, body: NextDueUpdate, db: Session = Depends(get_db)):
+    """Override when the next reminder fires, for this cycle only (`due_at`
+    null clears the override). Reverts to the normal interval once the next
+    event is logged."""
+    ct = _get_chore_type(key, db)
+    tz = _profile_timezone(_get_profile_dict(db))
+    existing = db.get(Setting, f"next_due_override:{ct.key}")
+    if body.due_at is None:
+        if existing is not None:
+            db.delete(existing)
+    else:
+        last = _last_event(db, ct.key)
+        _set_setting(
+            db,
+            f"next_due_override:{ct.key}",
+            {"due_at": as_utc(body.due_at).isoformat(), "event_id": last.id if last else None},
+        )
+    db.commit()
+    return _status_for(ct, db, tz)
 
 
 @router.post("/events", response_model=EventOut)
@@ -543,16 +622,10 @@ def _today_bounds(tz: ZoneInfo) -> tuple[datetime, datetime]:
 
 
 def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
-    stmt = (
-        select(Event)
-        .where(Event.chore_type == ct.key)
-        .order_by(Event.timestamp.desc())
-        .limit(1)
-    )
-    last = db.execute(stmt).scalars().first()
+    last = _last_event(db, ct.key)
     interval = _interval_minutes(db, ct)
     last_out = _event_out(ct, last, db) if last else None
-    next_due = ct.next_due(last_out.timestamp if last_out else None, interval, tz)
+    next_due, next_due_overridden = _compute_next_due(db, ct, last, tz)
     overdue = bool(next_due and next_due < _now())
 
     active_session_event_id = None
@@ -602,6 +675,8 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
         icon=ct.icon,
         last_event=last_out,
         next_due=next_due,
+        next_due_overridden=next_due_overridden,
+        reminder_enabled=_reminder_enabled(db, ct.key),
         interval_minutes=interval,
         overdue=overdue,
         active_session_event_id=active_session_event_id,

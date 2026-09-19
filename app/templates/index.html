@@ -94,6 +94,8 @@
       <button id="add-chore-type-btn" class="btn secondary" data-i18n="+ Add">+ Add</button>
     </div>
     <div id="chore-types-manager" class="chore-types-manager"></div>
+    <div class="section-heading"><h2 data-i18n="Push notifications">Push notifications</h2></div>
+    <div id="push-box" class="push-box"></div>
     <div class="section-heading"><h2 data-i18n="Reminders">Reminders</h2></div>
     <div id="settings-list" class="settings-list"></div>
   </section>
@@ -116,6 +118,16 @@
       <button id="ct-modal-close" class="icon-btn">✕</button>
     </div>
     <form id="ct-modal-form"></form>
+  </div>
+</div>
+
+<div id="due-modal-backdrop" class="modal-backdrop hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="due-modal-title">Next reminder</h2>
+      <button id="due-modal-close" class="icon-btn">✕</button>
+    </div>
+    <div id="due-modal-body"></div>
   </div>
 </div>
 
