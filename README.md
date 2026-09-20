@@ -75,20 +75,49 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   chores it gets pushes for (a per-chore "🔔 Push" checkbox under
   Reminders), so e.g. one phone can be feeding-only. The server checks
   every 30 seconds and sends one notification per due time, in the
-  language the device is set to (EN/UK); a due time that passed more than
+  language the device is set to (EN/UK). A due time that passed more than
   30 minutes ago is skipped, so turning reminders on or restarting the
-  server never dumps a pile of old alerts. **Requires HTTPS** (browsers
+  server never dumps a pile of old alerts - and a reminder that was
+  *already overdue* when you switched push on doesn't get one either (the
+  dashboard already shows it as overdue; the Settings line under it says
+  "Already overdue - no push for this one"). **Requires HTTPS** (browsers
   only allow push on `https://` or `localhost` - e.g. put the app behind a
   reverse proxy or Tailscale HTTPS), and on iPhone/iPad the app must be
   added to the Home Screen first (iOS 16.4+). The server's VAPID keys are
   generated on first start and stored in the database; if a push service
   rejects the placeholder contact address, set `VAPID_SUBJECT`
   (see `babymonitor.env`).
+- **Push a few minutes early**: each reminder has a "Notify [ ] min before
+  due" field (Settings → Reminders; 0 = at the due time) and the
+  notification then reads "Due in 10 min". A lead longer than the wait
+  itself is capped at halfway - a reminder you set for 6 minutes from now
+  with a 10-minute lead pings after ~3, not the instant you set it.
+- **Built to arrive while the phone sleeps**: pushes go out with
+  `Urgency: high` (Android wakes the device for those even in Doze) and a
+  TTL that lasts until the reminder stops being useful, so a push service
+  holds one for a phone that is briefly unreachable. A send that fails is
+  retried every minute (up to 6 times). The service worker confirms every
+  push it receives; if no confirmation comes within 4 minutes the server
+  sends it once more - quietly replacing, never doubling, the first if
+  that one was just late. If the browser rotates the subscription on its
+  own, the device re-registers itself and keeps its chore choices.
+- **See what happened**: with push enabled, Settings shows whether the
+  server's checker is alive, a "Push at 14:20 (in 2h 5m)" line under each
+  reminder (later "Push sent 14:20 · ✓ received on device"), and a
+  delivery log of the latest sends, retries and receipts. **Test in 1 min**
+  sends a test push after a delay - tap it, lock the phone, and wait: if it
+  arrives, reminders will too. Everything is also in the server log
+  (`podman logs babymonitor`).
+  If it never arrives while the phone is locked, it's the phone, not the
+  server: on Android set the browser's (or the installed app's) battery
+  usage to **Unrestricted** and don't let it be force-stopped; some
+  vendors (Xiaomi, Huawei, OnePlus, Samsung "deep sleep") kill background
+  browsers aggressively and need it whitelisted.
 - **Reminders on/off and per-cycle timing**: every chore's reminder has
   an on/off switch in Settings → Reminders (turning it off keeps the
   interval, and hides the "Next" time and stops the pushes). On the
   dashboard, ⏱ next to the "Next" time lets you change *this one* due
-  time - "in 30 min / 1 h / 2 h / 3 h / 4 h" from now, or at a specific
+  time - "in 30 min / 1 h / 2 h / 3 h / 4 h / 5 h / 6 h" from now, or at a specific
   clock time - e.g. a longer gap after a night feed. It's marked ✎ and
   reverts to the normal interval as soon as the next event is logged (or
   if you change that chore's interval). Probiotic's due time is local
@@ -181,7 +210,9 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   (whatever language you typed them in). The choice persists in a cookie
   (`bm_lang`), so it survives reloads and re-visits.
 - **Settings persist in cookies**: language and the Stats period and
-  forecast selectors (`bm_stats_days`, `bm_stats_forecast`) are remembered
+  forecast selectors (`bm_stats_days`, `bm_stats_forecast`), and the
+  Competition period and hidden categories (`bm_competition_period`,
+  `bm_comp_hidden`) are remembered
   across visits via cookies rather than localStorage.
 - **Per-person tracking**: add people in Settings (e.g. "Mom"/"Dad"), and
   set which one *this device* usually logs as - every quick action and new
@@ -189,11 +220,28 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   pick someone else for a one-off. The device's choice is a cookie
   (`bm_person_id`), not tied to any account. Deleting a person unassigns
   their past events rather than deleting them.
-- **Competition tab**: per-person leaderboards for every chore type over a
-  selectable period (24h through all-time) - event counts plus each
-  numeric_stat field that's a real total (pee/poop counts, ml fed, etc;
-  point-in-time readings like weight are correctly left out of the
-  ranking, since summing weigh-ins across a period isn't meaningful).
+- **Competition tab**: who does the most. Every entry counts for the person
+  it was logged as, so it only works if people log as themselves (Settings →
+  People → "This device belongs to"). The page has:
+  - **Standings** with a podium and points - 3 / 2 / 1 for 1st / 2nd / 3rd
+    in every category where at least two people are competing (a category
+    only one person ever touches isn't a contest), plus each person's medal
+    count - for **Today**, **7 days**, **30 days** or **All time**;
+  - **Who leads what**: one table with the leader of every category *today,
+    over the last 7 days and over the last 30 days* side by side (ties show
+    both), and the overall leader of each period on top;
+  - **By category**: ranked bars per chore type with medals, values and
+    each person's share, for the selected period. Entries logged with no
+    person are shown greyed and never take a place;
+  - **Customize** (⚙): pick which categories - and which individual
+    measures within them, e.g. hide "Peed during the change" - are shown.
+    Hidden ones are also left out of the standings and points. Saved per
+    device in a cookie; anything new shows up by default.
+  A "category" is either the number of entries for a chore type or the
+  total of one of its summable numeric fields (wet/dirty diapers, ml fed,
+  minutes slept, ...); point-in-time readings like weight are left out,
+  since summing weigh-ins isn't meaningful. "Today" means since local
+  midnight; 7 and 30 days are rolling.
 - **Instant sleep start/end**: "Start Sleep" / "End Sleep" log immediately
   at the current time with no popup, since that's almost always what's
   meant. A "+" next to it opens the regular modal instead, for logging a
@@ -460,9 +508,10 @@ done in the app's Settings tab.
 - `POST /api/chore-types/reorder` - `{keys: [...]}` in the desired display order
 - `DELETE /api/chore-types/{key}` - delete a custom chore type and its events (built-ins can only be disabled)
 - `POST /api/chore-types/{key}/quick-actions` / `PUT .../{action_id}` / `DELETE .../{action_id}` - manage configurable quick actions for entries-based chore types: `{label, mode: "increment"|"absolute"|"log", match_field, match_value, target_field?, value?}` - mode `"log"` (target_field/value unused) just appends a new checkpoint stamped `match_field: match_value`, e.g. feeding's default Breast/Formula/Pumped buttons
-- `PUT /api/chore-types/{key}/settings` - partial update of `{interval_minutes?, session_window_minutes?, reminder_enabled?}`; only the fields you send change
+- `PUT /api/chore-types/{key}/settings` - partial update of `{interval_minutes?, session_window_minutes?, reminder_enabled?, push_lead_minutes?}`; only the fields you send change
 - `PUT /api/chore-types/{key}/next-due` - `{due_at}` overrides the next reminder time for the current cycle only (`null` clears it); reverts once the next event is logged. `GET /api/status` reports `next_due_overridden` and `reminder_enabled` (`next_due` is `null` while a reminder is off)
-- `GET /api/push/config` (VAPID public key), `POST /api/push/subscribe` / `POST /api/push/unsubscribe` / `POST /api/push/state` / `PUT /api/push/preferences` `{endpoint, muted_types?, lang?}` / `POST /api/push/test` - Web Push device registration and per-device chore choices
+- `GET /api/push/config` (VAPID public key), `POST /api/push/subscribe` / `POST /api/push/resubscribe` / `POST /api/push/unsubscribe` / `POST /api/push/state` / `PUT /api/push/preferences` `{endpoint, muted_types?, lang?}` - Web Push device registration and per-device chore choices
+- `POST /api/push/test` `{endpoint, delay_seconds?}` - send a test push now, or after up to 600 s; `POST /api/push/ack` `{sid, nid}` - the service worker's delivery receipt; `GET /api/push/status` - checker health, per-chore schedule (`notify_at`, `state`: scheduled / sent / missed / off, `received`) and the recent delivery log
 - `GET /api/profile` / `PUT /api/profile` (partial updates supported) - baby's name, birth date, birth weight, sex (`"boy"`/`"girl"`/null - selects the WHO growth curves), timezone (auto-synced from the browser; drives age display and day-bucketing)
 - `GET /api/people` / `POST /api/people` / `PUT /api/people/{id}` / `DELETE /api/people/{id}` - manage household members events can be attributed to; deleting one unassigns (not deletes) their past events
 - `POST /api/events` - log an event `{chore_type, timestamp?, data, notes?, person_id?}`
@@ -470,7 +519,7 @@ done in the app's Settings tab.
 - `GET/PUT/DELETE /api/events/{id}` - fetch/edit/delete a single event
 - `GET /api/status` / `GET /api/status/{key}` - last event, next due time, active session id, `open_event_id` (for start/end types like sleep), and today's totals per numeric field
 - `GET /api/stats/{key}?days=90&forecast_days=0` (or `all_time=true`) - daily aggregation for charts, zero-filled for every calendar day from birth / the first logged event. Each day has `count`, one value per numeric field, `age_days`, and the healthy range for that date as `<field>_ref_min` / `_ref_max` (plus `_ref_mid` for WHO curves); `count` covers events per day (feeds/day for `feeding`). Today is flagged `partial: true`. With `forecast_days` > 0 the list runs on into the future (`future: true`, ranges only) and `forecast` holds a projection per metric. Also: `references` (source label/url per metric), `latest` (last weight/height reading with `percentile`/`z` when the profile has a sex), `has_guidance`, and `growth_rate` for `weight`
-- `GET /api/competition?days=30` or `?all_time=true` - per-person totals/event-counts for every chore type in the period, for the Competition tab
+- `GET /api/competition` - everything the Competition tab shows, for all periods at once: `people`, `chore_types[].boards[]` (a board is a ranking: `<key>:count` or `<key>:<field>`) and `scores[period][board][person id | "unassigned"]` for `period` in `today` / `7` / `30` / `all`
 - `GET /api/calculators/feeding?age_days=&weight_g=` - suggested feeding amounts/interval for an age (defaults to the profile's age and latest weight if omitted)
 
 Interactive OpenAPI docs are available at `/docs`.

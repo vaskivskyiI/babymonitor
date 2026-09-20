@@ -30,9 +30,11 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Web Push: the server sends {title, body, tag, url}. The tag is the chore
-// type, so a newer reminder for the same chore replaces the old one instead
-// of stacking up.
+// Web Push: the server sends {title, body, tag, url, nid, sid, renotify}. The
+// tag is the chore type, so a newer reminder for the same chore replaces the
+// old one instead of stacking up. `renotify` is false only for the server's
+// automatic re-send, so that if the original turns up late the copy replaces
+// it without buzzing twice.
 self.addEventListener("push", (event) => {
   let data = {};
   try {
@@ -40,15 +42,54 @@ self.addEventListener("push", (event) => {
   } catch (e) {
     data = { body: event.data ? event.data.text() : "" };
   }
+
+  const show = self.registration.showNotification(data.title || "Baby Monitor", {
+    body: data.body || "",
+    tag: data.tag || undefined,
+    renotify: !!data.tag && data.renotify !== false,
+    // a reminder should be noticed in a pocket, and stay until dealt with
+    vibrate: [200, 100, 200],
+    requireInteraction: true,
+    icon: "/static/icon-192.png",
+    badge: "/static/icon-192.png",
+    data: { url: data.url || "/" },
+  });
+
+  // Tell the server this push really reached the device: it stops the
+  // automatic re-send and lets Settings show "received". Best-effort - the
+  // notification is what matters, so a failed ack must never block it.
+  const ack =
+    data.nid && data.sid != null
+      ? fetch("/api/push/ack", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sid: data.sid, nid: data.nid }),
+        }).catch(() => {})
+      : Promise.resolve();
+
+  event.waitUntil(Promise.all([show, ack]));
+});
+
+// The browser can retire a push subscription on its own (expiry, key
+// rotation). Re-subscribe and hand the server the new one - it carries over
+// this device's chore choices - instead of silently going quiet.
+self.addEventListener("pushsubscriptionchange", (event) => {
   event.waitUntil(
-    self.registration.showNotification(data.title || "Baby Monitor", {
-      body: data.body || "",
-      tag: data.tag || undefined,
-      renotify: !!data.tag,
-      icon: "/static/icon-192.png",
-      badge: "/static/icon-192.png",
-      data: { url: data.url || "/" },
-    })
+    (async () => {
+      const old = event.oldSubscription;
+      let sub = event.newSubscription;
+      if (!sub) {
+        const key = old && old.options && old.options.applicationServerKey;
+        if (!key) return;
+        sub = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      }
+      const json = sub.toJSON();
+      await fetch("/api/push/resubscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ old_endpoint: old ? old.endpoint : null, endpoint: json.endpoint, keys: json.keys }),
+      });
+    })().catch(() => {})
   );
 });
 

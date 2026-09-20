@@ -132,35 +132,72 @@ def _reminder_enabled(db: Session, key: str) -> bool:
     return True
 
 
+def _push_lead_minutes(db: Session, key: str) -> int:
+    """How many minutes before the due time the push notification goes out
+    (0 = at the due time). Shares the `reminder:{key}` row with the on/off flag."""
+    setting = db.get(Setting, f"reminder:{key}")
+    if setting and setting.value:
+        return int(setting.value.get("lead_minutes") or 0)
+    return 0
+
+
+def _update_reminder_setting(db: Session, key: str, **changes) -> None:
+    setting = db.get(Setting, f"reminder:{key}")
+    value = dict(setting.value) if setting and setting.value else {}
+    value.update(changes)
+    _set_setting(db, f"reminder:{key}", value)
+
+
 def _last_event(db: Session, key: str) -> Event | None:
     stmt = select(Event).where(Event.chore_type == key).order_by(Event.timestamp.desc()).limit(1)
     return db.execute(stmt).scalars().first()
 
 
-def _next_due_override(db: Session, key: str, last: Event | None) -> datetime | None:
+def _next_due_override(db: Session, key: str, last: Event | None) -> tuple[datetime, datetime | None] | None:
     """A one-off "remind me at X instead" for the current cycle (e.g. a
-    longer gap after a night feed). It's tied to the event it was set for,
-    so logging the next event drops it and the normal interval applies again."""
+    longer gap after a night feed) as (due, when it was set). It's tied to
+    the event it was set for, so logging the next event drops it and the
+    normal interval applies again."""
     setting = db.get(Setting, f"next_due_override:{key}")
     if not setting or not setting.value:
         return None
     if setting.value.get("event_id") != (last.id if last else None):
         return None
     try:
-        return as_utc(datetime.fromisoformat(setting.value["due_at"]))
+        due = as_utc(datetime.fromisoformat(setting.value["due_at"]))
     except (KeyError, ValueError):
         return None
+    set_at = setting.value.get("set_at")
+    try:
+        return due, (as_utc(datetime.fromisoformat(set_at)) if set_at else None)
+    except ValueError:
+        return due, None
+
+
+def _next_due_info(db: Session, ct, last: Event | None, tz: ZoneInfo) -> dict:
+    """{"due", "overridden", "armed_at"}: when the reminder is due, whether
+    that was set by hand, and when this due time came into being (the last
+    event, or the moment it was overridden) - push uses that to avoid
+    announcing a due time the instant it was set. `due` is None when the
+    reminder is switched off or there is nothing to count from."""
+    if not _reminder_enabled(db, ct.key):
+        return {"due": None, "overridden": False, "armed_at": None}
+    override = _next_due_override(db, ct.key, last)
+    if override is not None:
+        due, set_at = override
+        return {"due": due, "overridden": True, "armed_at": set_at}
+    last_ts = as_utc(last.timestamp) if last else None
+    return {
+        "due": ct.next_due(last_ts, _interval_minutes(db, ct), tz),
+        "overridden": False,
+        "armed_at": last_ts,
+    }
 
 
 def _compute_next_due(db: Session, ct, last: Event | None, tz: ZoneInfo) -> tuple[datetime | None, bool]:
     """(next_due, is_overridden). None when the reminder is switched off."""
-    if not _reminder_enabled(db, ct.key):
-        return None, False
-    override = _next_due_override(db, ct.key, last)
-    if override is not None:
-        return override, True
-    last_ts = as_utc(last.timestamp) if last else None
-    return ct.next_due(last_ts, _interval_minutes(db, ct), tz), False
+    info = _next_due_info(db, ct, last, tz)
+    return info["due"], info["overridden"]
 
 
 def _session_window_minutes(db: Session, ct) -> int | None:
@@ -352,6 +389,7 @@ def list_chore_types(include_disabled: bool = False, db: Session = Depends(get_d
         d["is_builtin"] = ct.key in REGISTRY
         d["enabled"] = metas[ct.key].enabled if ct.key in metas else True
         d["reminder_enabled"] = _reminder_enabled(db, ct.key)
+        d["push_lead_minutes"] = _push_lead_minutes(db, ct.key)
         result.append(d)
     return result
 
@@ -507,10 +545,13 @@ def update_settings(key: str, body: SettingsUpdate, db: Session = Depends(get_db
             db, f"session_window:{ct.key}", {"session_window_minutes": body.session_window_minutes}
         )
     if body.reminder_enabled is not None:
-        _set_setting(db, f"reminder:{ct.key}", {"enabled": body.reminder_enabled})
+        _update_reminder_setting(db, ct.key, enabled=body.reminder_enabled)
+    if "push_lead_minutes" in fields_set:
+        _update_reminder_setting(db, ct.key, lead_minutes=body.push_lead_minutes or 0)
     db.commit()
     d = ct.as_dict(_interval_minutes(db, ct), _session_window_minutes(db, ct))
     d["reminder_enabled"] = _reminder_enabled(db, ct.key)
+    d["push_lead_minutes"] = _push_lead_minutes(db, ct.key)
     return d
 
 
@@ -530,7 +571,11 @@ def update_next_due(key: str, body: NextDueUpdate, db: Session = Depends(get_db)
         _set_setting(
             db,
             f"next_due_override:{ct.key}",
-            {"due_at": as_utc(body.due_at).isoformat(), "event_id": last.id if last else None},
+            {
+                "due_at": as_utc(body.due_at).isoformat(),
+                "event_id": last.id if last else None,
+                "set_at": _now().isoformat(),
+            },
         )
     db.commit()
     return _status_for(ct, db, tz)
@@ -705,50 +750,81 @@ def status_all(db: Session = Depends(get_db)):
 
 # ---------- competition (per-person stats) ----------
 
+COMPETITION_PERIODS = ("today", "7", "30", "all")
+
 
 @router.get("/competition")
-def competition(days: int = Query(30, le=3650), all_time: bool = False, db: Session = Depends(get_db)):
-    since = None if all_time else _now() - timedelta(days=days)
+def competition(db: Session = Depends(get_db)):
+    """Everything the Competition tab needs, for every period at once, so the
+    UI can show today / last 7 days / last 30 days leaders side by side and
+    switch periods without another round trip.
+
+    A "board" is one ranking: either how many entries someone logged for a
+    chore type (`<key>:count`) or the total of one of its summable numeric
+    fields (`<key>:<field>`, e.g. `feeding:total_amount_ml`). `scores[period]
+    [board_id][bucket]` is that total, where `bucket` is a person id or
+    "unassigned". Periods: "today" (since local midnight), "7" and "30"
+    (rolling days) and "all". Buckets with no score are omitted."""
+    tz = _profile_timezone(_get_profile_dict(db))
+    now = _now()
+    since = {
+        "today": _today_bounds(tz)[0],
+        "7": now - timedelta(days=7),
+        "30": now - timedelta(days=30),
+        "all": None,
+    }
     people = db.execute(select(Person).order_by(Person.sort_order, Person.id)).scalars().all()
 
     chore_type_results = []
+    scores: dict[str, dict[str, dict[str, float]]] = {p: {} for p in COMPETITION_PERIODS}
     for ct in _effective_chore_types(db, enabled_only=True):
-        stmt = select(Event).where(Event.chore_type == ct.key)
-        if since is not None:
-            stmt = stmt.where(Event.timestamp >= since)
-        events = db.execute(stmt).scalars().all()
+        events = db.execute(select(Event).where(Event.chore_type == ct.key)).scalars().all()
         if not events:
-            continue  # skip chore types with no activity in the period - less noise
+            continue  # nothing ever logged - not worth a category
 
         # "last"-aggregated fields (e.g. weight_g, height_cm) are point-in-
         # time readings, not something to sum - summing several weight
         # readings across a period is meaningless. Competition is about
         # totals/counts, so only sum-aggregated numeric fields qualify.
-        numeric_fields_defs = [f for f in ct.numeric_fields() if f.stat_agg == "sum"]
-        counts: dict[str, int] = defaultdict(int)
-        totals: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-        for e in events:
-            bucket = str(e.person_id) if e.person_id is not None else "unassigned"
-            counts[bucket] += 1
-            for f in numeric_fields_defs:
-                val = e.data.get(f.name)
-                # bool is a subclass of int in Python, so True/False already
-                # contribute 1/0 here - no separate boolean-counting branch
-                if isinstance(val, (int, float)):
-                    totals[bucket][f.name] += val
+        fields = [f for f in ct.numeric_fields() if f.stat_agg == "sum"]
+        boards = [{"id": f"{ct.key}:count", "metric": "count", "label": "Events", "unit": "", "display": None}] + [
+            {"id": f"{ct.key}:{f.name}", "metric": f.name, "label": f.label, "unit": f.unit or "", "display": f.display}
+            for f in fields
+        ]
+        for period in COMPETITION_PERIODS:
+            for b in boards:
+                scores[period][b["id"]] = defaultdict(float)
 
-        chore_type_results.append({
-            "key": ct.key,
-            "label": ct.label,
-            "icon": ct.icon,
-            "fields": [{"name": f.name, "label": f.label, "unit": f.unit} for f in numeric_fields_defs],
-            "counts": dict(counts),
-            "totals": {bucket: dict(vals) for bucket, vals in totals.items()},
-        })
+        for e in events:
+            ts = as_utc(e.timestamp)
+            bucket = str(e.person_id) if e.person_id is not None else "unassigned"
+            for period in COMPETITION_PERIODS:
+                lower = since[period]
+                if lower is not None and ts < lower:
+                    continue
+                board_scores = scores[period]
+                board_scores[f"{ct.key}:count"][bucket] += 1
+                for f in fields:
+                    val = e.data.get(f.name)
+                    # bool is a subclass of int in Python, so True/False already
+                    # contribute 1/0 here - no separate boolean-counting branch
+                    if isinstance(val, (int, float)):
+                        board_scores[f"{ct.key}:{f.name}"][bucket] += val
+
+        chore_type_results.append({"key": ct.key, "label": ct.label, "icon": ct.icon, "boards": boards})
 
     return {
         "people": [{"id": p.id, "name": p.name, "color": p.color} for p in people],
+        "today": now.astimezone(tz).date().isoformat(),
+        "periods": list(COMPETITION_PERIODS),
         "chore_types": chore_type_results,
+        "scores": {
+            period: {
+                board: {bucket: round(v, 1) for bucket, v in by_bucket.items() if v}
+                for board, by_bucket in boards.items()
+            }
+            for period, boards in scores.items()
+        },
     }
 
 

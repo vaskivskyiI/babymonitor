@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EventCreate(BaseModel):
@@ -60,6 +60,8 @@ class SettingsUpdate(BaseModel):
     session_window_minutes: Optional[int] = None
     # master reminder on/off; omitted = leave as is
     reminder_enabled: Optional[bool] = None
+    # push this many minutes before the due time (0 = at the due time)
+    push_lead_minutes: Optional[int] = Field(default=None, ge=0, le=1440)
 
 
 class NextDueUpdate(BaseModel):
@@ -97,6 +99,26 @@ class PushSubscribe(BaseModel):
 
 class PushEndpoint(BaseModel):
     endpoint: str
+
+
+class PushTest(BaseModel):
+    endpoint: str
+    # >0: send after this many seconds, so you can lock the phone first and
+    # check that pushes get through while it sleeps
+    delay_seconds: int = Field(default=0, ge=0, le=600)
+
+
+class PushAck(BaseModel):
+    """Sent by the service worker the moment a push reaches the device."""
+
+    sid: int
+    nid: str
+
+
+class PushResubscribe(BaseModel):
+    old_endpoint: Optional[str] = None
+    endpoint: str
+    keys: PushKeys
 
 
 class PushPreferences(BaseModel):

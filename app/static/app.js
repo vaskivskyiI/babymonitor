@@ -231,6 +231,48 @@ const I18N = {
     "day": "день",
     "feed": "годування",
     "Sources:": "Джерела:",
+    // competition
+    "Standings": "Турнірна таблиця",
+    "Who leads what": "Хто в чому лідирує",
+    "By category": "За категоріями",
+    "Overall": "Загалом",
+    "pts": "очок",
+    "entries": "записів",
+    "tie": "порівну",
+    "Customize": "Налаштувати",
+    "hidden": "приховано",
+    "Choose what to show": "Оберіть, що показувати",
+    "Show all": "Показати все",
+    "Saved on this device. Hidden categories are left out of the standings and points too.": "Зберігається на цьому пристрої. Приховані категорії не враховуються в таблиці й очках.",
+    "Every category is hidden - pick some under Customize.": "Усі категорії приховано - оберіть щось у «Налаштувати».",
+    "Nothing logged in this period yet.": "За цей період ще нічого не записано.",
+    "Nothing contested in this period yet - it takes two people logging the same thing.": "За цей період ще немає змагання - потрібно, щоб двоє людей записували те саме.",
+    "3 points for 1st, 2 for 2nd and 1 for 3rd in every category where at least two people are competing. Scores count who logged each entry.": "3 очки за 1-е місце, 2 за 2-е і 1 за 3-є в кожній категорії, де змагаються щонайменше двоє. Рахується, хто зробив запис.",
+    // push: lead time, delivery diagnostics
+    "Notify": "Сповіщати за",
+    "min before due": "хв до терміну",
+    "Push at": "Push о",
+    "Push sent": "Push надіслано",
+    "Push due now": "Push зараз",
+    "push: received on device": "отримано на пристрої",
+    "push: not confirmed yet": "ще не підтверджено",
+    "Already overdue - no push for this one": "Вже прострочено - для цього push не буде",
+    "Test in 1 min": "Тест через 1 хв",
+    "Test scheduled - lock your phone now": "Тест заплановано - заблокуйте телефон зараз",
+    "Test in 1 min: lock your phone right after tapping it - if it arrives, reminders will reach you while it sleeps.": "Тест через 1 хв: заблокуйте телефон одразу після натискання - якщо сповіщення прийде, нагадування дійдуть і коли він спить.",
+    "Not arriving while the phone is locked? On Android, set battery usage for the browser (or installed app) to Unrestricted. On iPhone, the app must be added to the Home Screen.": "Не приходять, коли телефон заблокований? На Android встановіть для браузера (або встановленого застосунку) використання батареї «Без обмежень». На iPhone застосунок має бути доданий на Початковий екран.",
+    "Server checks every {n} s - last check {s} s ago": "Сервер перевіряє кожні {n} с - остання перевірка {s} с тому",
+    "Server check is not running - see the server log": "Перевірка на сервері не працює - дивіться журнал сервера",
+    "Delivery log": "Журнал доставки",
+    "push log: sent": "надіслано",
+    "push log: resend": "надіслано повторно (немає підтвердження)",
+    "push log: retry": "повторна спроба",
+    "push log: received": "отримано на пристрої",
+    "push log: error": "помилка",
+    "push log: gone": "пристрій видалено",
+    "push log: test": "тест надіслано",
+    "push log: test-scheduled": "тест заплановано",
+    "push log: resubscribed": "підписку оновлено",
     "General guidance only, not medical advice - every baby is different.": "Лише загальна інформація, не медична консультація - кожна дитина різна.",
     // toasts / errors
     "Error: ": "Помилка: ",
@@ -269,6 +311,8 @@ const I18N_NO_SUMMARY = new Set([
   "Period", "Forecast", "Actual", "Healthy", "so far", "no data", "today", "Today", "Yesterday",
   "days", "Sex", "Boy", "Girl", "as of", "Latest", "day", "feed", "per feed", "per day", "feeds/day",
   "Calculate", "Recalculate", "Sources:", "Healthy range", "At a glance",
+  "Notify",
+  "Overall", "pts", "entries", "tie", "hidden", "Standings",
 ]);
 const I18N_SUMMARY_KEYS = {};
 for (const lang of Object.keys(I18N)) {
@@ -336,6 +380,14 @@ const state = {
   lang: getCookie("bm_lang") || detectDefaultLang(),
   people: [],
   push: null, // this device's push status, see loadPushState()
+  pushStatus: null, // what the server reports about delivery, see loadPushStatus()
+  // Competition page: selected period, and which boards this device hides (cookies)
+  competition: {
+    data: null,
+    period: getCookie("bm_competition_period") || "7",
+    hidden: new Set((getCookie("bm_comp_hidden") || "").split(",").filter(Boolean)),
+    configOpen: false,
+  },
   // Stats page selection; period/forecast persist in cookies. Validated in init.
   stats: { key: null, days: getCookie("bm_stats_days") || "90", forecast: getCookie("bm_stats_forecast") || "0" },
 };
@@ -703,7 +755,7 @@ async function setNextDue(key, date) {
 
 function openDueModal(s) {
   document.getElementById("due-modal-title").textContent = `${s.icon} ${t(s.label)}`;
-  const presets = [30, 60, 120, 180, 240];
+  const presets = [30, 60, 120, 180, 240, 300, 360];
   const presetLabel = (m) => (m < 60 ? `${m}${t("min")}` : `${m / 60}h`);
   const current = s.next_due
     ? `${t(s.overdue ? "Overdue by" : "Next")} ${fmtRelative(s.next_due, "in", true)} (${fmtClockTime(s.next_due)})`
@@ -1685,14 +1737,159 @@ function svgSparkline(points, color, zeroBased = true) {
     </svg>`;
 }
 
-// ---------- competition (per-person stats) ----------
+// ---------- competition ----------
+//
+// Everyone who logs things is a competitor. A "board" is one ranking - entries
+// logged for a chore type, or the total of one of its numeric fields (ml fed,
+// wet diapers, ...). The server sends every board's scores for today / 7 days
+// / 30 days / all time in one go; ranking, points and the leader tables are
+// worked out here, so switching period or hiding a category is instant.
+
+const COMP_PERIODS = [
+  { v: "today", en: "Today", uk: "Сьогодні" },
+  { v: "7", en: "7 days", uk: "7 днів" },
+  { v: "30", en: "30 days", uk: "30 днів" },
+  { v: "all", en: "All time", uk: "Весь час" },
+];
+// the "who leads what" table: the periods the leaders are compared across
+const COMP_LEADER_PERIODS = ["today", "7", "30"];
+const COMP_POINTS = [3, 2, 1]; // for 1st, 2nd, 3rd
+const MEDALS = ["🥇", "🥈", "🥉"];
+const PERSON_COLORS = ["#6c5ce7", "#f5a524", "#12b886", "#e5484d", "#0ea5e9", "#ec4899", "#84cc16", "#f97316"];
+const UNASSIGNED_COLOR = "#9aa0aa";
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+function compPeriodLabel(v) {
+  return chipLabel(COMP_PERIODS.find((p) => p.v === v));
+}
+
+function compPeriodTitle(v) {
+  return v === "today" ? t("Today") : v === "7" ? t("Last 7 days") : v === "30" ? t("Last 30 days") : t("All time");
+}
+
+// who a score bucket belongs to
+function compBucket(data, bucket) {
+  if (bucket === "unassigned") return { name: t("Unassigned"), color: UNASSIGNED_COLOR, person: false };
+  const idx = data.people.findIndex((p) => String(p.id) === String(bucket));
+  const p = data.people[idx];
+  if (!p) return { name: t("Unassigned"), color: UNASSIGNED_COLOR, person: false };
+  return { name: p.name, color: p.color || PERSON_COLORS[idx % PERSON_COLORS.length], person: true };
+}
+
+function avatarHtml(info, big = false) {
+  const initial = [...(info.name || "?")][0].toUpperCase();
+  return `<span class="avatar ${big ? "big" : ""}" style="background:${info.color}">${esc(initial)}</span>`;
+}
+
+function fmtBoardValue(board, v) {
+  if (board.display === "duration") return fmtDurationMinutes(v);
+  const n = Number.isInteger(v) ? v : round1(v);
+  return `${n}${board.unit || ""}`;
+}
+
+// boards flattened, with their chore type, minus the ones hidden on this device
+function compBoards(data) {
+  const out = [];
+  data.chore_types.forEach((ct) =>
+    ct.boards.forEach((b) => out.push({ ...b, ct, hidden: state.competition.hidden.has(b.id) }))
+  );
+  return out;
+}
+
+// One board in one period: people ranked (ties share a rank), the unassigned
+// bucket kept apart - it isn't a competitor, so it never takes a place.
+function rankBoard(data, boardId, period) {
+  const by = (data.scores[period] && data.scores[period][boardId]) || {};
+  const entries = Object.entries(by).map(([bucket, value]) => ({ bucket, value, ...compBucket(data, bucket) }));
+  const people = entries.filter((e) => e.person).sort((a, b) => b.value - a.value);
+  let rank = 0;
+  let prev = null;
+  people.forEach((e, i) => {
+    if (e.value !== prev) {
+      rank = i + 1;
+      prev = e.value;
+    }
+    e.rank = rank;
+  });
+  const others = entries.filter((e) => !e.person);
+  return {
+    people,
+    others,
+    max: Math.max(0, ...entries.map((e) => e.value)),
+    total: entries.reduce((s, e) => s + e.value, 0),
+    // a win only means something if someone else was in the running
+    contested: people.length >= 2,
+    leaders: people.filter((e) => e.rank === 1),
+  };
+}
+
+// Points table over the visible boards: 3 / 2 / 1 for 1st / 2nd / 3rd on
+// every contested board.
+function compStandings(data, period) {
+  const table = {};
+  data.people.forEach((p) => {
+    table[p.id] = { id: p.id, ...compBucket(data, p.id), points: 0, medals: [0, 0, 0], led: 0 };
+  });
+  compBoards(data)
+    .filter((b) => !b.hidden)
+    .forEach((b) => {
+      const r = rankBoard(data, b.id, period);
+      if (!r.contested) return;
+      r.people.forEach((e) => {
+        const row = table[e.bucket];
+        if (!row || e.rank > 3) return;
+        row.points += COMP_POINTS[e.rank - 1];
+        row.medals[e.rank - 1] += 1;
+        if (e.rank === 1) row.led += 1;
+      });
+    });
+  const rows = Object.values(table).sort(
+    (a, b) => b.points - a.points || b.medals[0] - a.medals[0] || b.medals[1] - a.medals[1] || a.name.localeCompare(b.name)
+  );
+  let rank = 0;
+  let prev = null;
+  rows.forEach((row, i) => {
+    const key = `${row.points}/${row.medals.join(",")}`;
+    if (key !== prev) {
+      rank = i + 1;
+      prev = key;
+    }
+    row.rank = rank;
+  });
+  return rows;
+}
+
+function saveCompHidden() {
+  setCookie("bm_comp_hidden", [...state.competition.hidden].join(","));
+}
 
 async function loadCompetition() {
   const box = document.getElementById("competition-content");
-  box.innerHTML = `<p class="muted-note">${t("Loading…")}</p>`;
-  const days = document.getElementById("competition-days").value;
-  const query = days === "all" ? "all_time=true" : `days=${days}`;
-  const data = await api(`/api/competition?${query}`);
+  if (!state.competition.data) box.innerHTML = `<p class="muted-note">${t("Loading…")}</p>`;
+  state.competition.data = await api("/api/competition");
+  renderCompetition();
+}
+
+function renderCompetition() {
+  const c = state.competition;
+  const data = c.data;
+  const box = document.getElementById("competition-content");
+
+  const boards = compBoards(data);
+  const hiddenCount = boards.filter((b) => b.hidden).length;
+  const toolbar = document.getElementById("competition-period-chips");
+  renderChips(toolbar, COMP_PERIODS, c.period, (v) => {
+    c.period = v;
+    setCookie("bm_competition_period", v);
+    renderCompetition();
+  });
+  const cfgBtn = document.getElementById("competition-config-btn");
+  cfgBtn.innerHTML = `⚙ ${t("Customize")}${hiddenCount ? ` <span class="badge warn">${hiddenCount} ${t("hidden")}</span>` : ""}`;
+  cfgBtn.classList.toggle("active", c.configOpen);
+  renderCompetitionConfig();
 
   if (!data.people.length) {
     box.innerHTML = `<p class="muted-note">${t("Add people in Settings to compare stats.")}</p>`;
@@ -1702,50 +1899,207 @@ async function loadCompetition() {
     box.innerHTML = `<p class="muted-note">${t("No data for this period.")}</p>`;
     return;
   }
-
-  const peopleById = {};
-  data.people.forEach((p) => (peopleById[p.id] = p));
-  const bucketLabel = (bucket) => (bucket === "unassigned" ? t("Unassigned") : peopleById[bucket]?.name || bucket);
-
-  // one ranked bar-row per bucket (person or "unassigned"), sorted highest
-  // first, zero entries dropped entirely - nothing to compete over there
-  function metricHtml(label, unit, valuesByBucket) {
-    const entries = Object.entries(valuesByBucket).filter(([, v]) => v);
-    if (!entries.length) return "";
-    entries.sort((a, b) => b[1] - a[1]);
-    const max = entries[0][1];
-    const rows = entries
-      .map(([bucket, val], i) => {
-        const display = Number.isInteger(val) ? val : Math.round(val * 10) / 10;
-        return `<div class="comp-row">
-            <span class="comp-name">${i === 0 ? "🏆 " : ""}${bucketLabel(bucket)}</span>
-            <div class="comp-bar-track"><div class="comp-bar" style="width:${(val / max) * 100}%"></div></div>
-            <span class="comp-val">${display}${unit || ""}</span>
-          </div>`;
-      })
-      .join("");
-    return `<div class="comp-metric"><div class="comp-metric-label">${label}</div>${rows}</div>`;
+  if (boards.every((b) => b.hidden)) {
+    box.innerHTML = `<p class="muted-note">${t("Every category is hidden - pick some under Customize.")}</p>`;
+    return;
   }
 
-  box.innerHTML = data.chore_types
+  box.innerHTML = standingsHtml(data, c.period) + leadersTableHtml(data, c.period) + categoryCardsHtml(data, c.period);
+}
+
+// ----- standings + podium -----
+
+function standingsHtml(data, period) {
+  const rows = compStandings(data, period);
+  const contested = rows.some((r) => r.points > 0);
+  let podium = "";
+  if (contested) {
+    const top = rows.filter((r) => r.points > 0 && r.rank <= 3);
+    // classic podium order: 2nd | 1st | 3rd (just 1st | 2nd when there are only two)
+    const byRank = [1, 2, 3].map((k) => top.filter((r) => r.rank === k)).flat();
+    let ordered = byRank;
+    if (byRank.length >= 3 && byRank[0].rank === 1 && byRank[1].rank === 2) {
+      ordered = [byRank[1], byRank[0], ...byRank.slice(2)];
+    }
+    podium = `<div class="podium">${ordered
+      .map(
+        (r) => `<div class="podium-col rank-${Math.min(r.rank, 3)}">
+          ${r.rank === 1 ? '<div class="crown">👑</div>' : ""}
+          ${avatarHtml(r, true)}
+          <div class="podium-name">${esc(r.name)}</div>
+          <div class="podium-pts">${r.points} ${t("pts")}</div>
+          <div class="podium-block"><span>${MEDALS[Math.min(r.rank, 3) - 1]}</span></div>
+        </div>`
+      )
+      .join("")}</div>`;
+  }
+  const list = rows
+    .map(
+      (r) => `<div class="standing-row ${r.rank === 1 && r.points > 0 ? "first" : ""}">
+        <span class="standing-rank">${r.points > 0 && r.rank <= 3 ? MEDALS[r.rank - 1] : r.rank}</span>
+        ${avatarHtml(r)}
+        <span class="standing-name">${esc(r.name)}</span>
+        <span class="standing-medals">${r.medals.map((n, i) => (n ? `<span>${MEDALS[i]}${n}</span>` : "")).join("")}</span>
+        <span class="standing-pts">${r.points} ${t("pts")}</span>
+      </div>`
+    )
+    .join("");
+  return `<section class="comp-section comp-hero">
+      <h2>🏆 ${t("Standings")} <small>${compPeriodTitle(period)}</small></h2>
+      ${contested ? podium : `<p class="muted-note">${t("Nothing contested in this period yet - it takes two people logging the same thing.")}</p>`}
+      <div class="standings">${list}</div>
+      <div class="comp-note">${t("3 points for 1st, 2 for 2nd and 1 for 3rd in every category where at least two people are competing. Scores count who logged each entry.")}</div>
+    </section>`;
+}
+
+// ----- who leads what -----
+
+function leaderChips(data, r, board) {
+  if (!r.people.length) return `<span class="muted">–</span>`;
+  return r.leaders
+    .map(
+      (e) => `<span class="lead-chip">${avatarHtml(e)}<span class="lead-name">${esc(e.name)}</span> <b>${fmtBoardValue(board, e.value)}</b></span>`
+    )
+    .join("");
+}
+
+function leadersTableHtml(data, period) {
+  const head = COMP_LEADER_PERIODS.map(
+    (p) => `<th class="${p === period ? "sel" : ""}">${compPeriodLabel(p)}</th>`
+  ).join("");
+
+  // overall leader per period (by points)
+  const overall = COMP_LEADER_PERIODS.map((p) => {
+    const rows = compStandings(data, p);
+    const top = rows.filter((r) => r.points > 0 && r.rank === 1);
+    const cell = top.length
+      ? top
+          .map((e) => `<span class="lead-chip">${avatarHtml(e)}<span class="lead-name">${esc(e.name)}</span> <b>${e.points} ${t("pts")}</b></span>`)
+          .join("")
+      : `<span class="muted">–</span>`;
+    return `<td class="${p === period ? "sel" : ""}">${cell}</td>`;
+  }).join("");
+
+  let body = `<tr class="overall"><th>👑 ${t("Overall")}</th>${overall}</tr>`;
+  data.chore_types.forEach((ct) => {
+    const boards = ct.boards.filter((b) => !state.competition.hidden.has(b.id));
+    // a category only earns its rows if somebody has scored in it in these periods
+    const rowsHtml = boards
+      .map((b) => {
+        const ranks = COMP_LEADER_PERIODS.map((p) => rankBoard(data, b.id, p));
+        if (ranks.every((r) => !r.people.length)) return "";
+        const cells = ranks
+          .map((r, i) => `<td class="${COMP_LEADER_PERIODS[i] === period ? "sel" : ""}">${leaderChips(data, r, b)}</td>`)
+          .join("");
+        return `<tr><th class="metric">${t(b.label)}${b.unit && b.display !== "duration" ? ` <span class="muted">(${esc(b.unit)})</span>` : ""}</th>${cells}</tr>`;
+      })
+      .join("");
+    if (rowsHtml) {
+      body += `<tr class="cat"><th colspan="${COMP_LEADER_PERIODS.length + 1}">${ct.icon} ${t(ct.label)}</th></tr>${rowsHtml}`;
+    }
+  });
+  return `<section class="comp-section">
+      <h2>👑 ${t("Who leads what")}</h2>
+      <div class="leaders-wrap"><table class="leaders-table"><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table></div>
+    </section>`;
+}
+
+// ----- category cards -----
+
+function categoryCardsHtml(data, period) {
+  const cards = data.chore_types
     .map((ct) => {
-      const countsHtml = metricHtml(t("Events"), "", ct.counts);
-      const fieldsHtml = ct.fields
-        .map((f) =>
-          metricHtml(
-            t(f.label),
-            f.unit || "",
-            Object.fromEntries(Object.entries(ct.totals).map(([bucket, vals]) => [bucket, vals[f.name] || 0]))
-          )
-        )
+      const boards = ct.boards.filter((b) => !state.competition.hidden.has(b.id));
+      const metrics = boards
+        .map((b) => ({ b, r: rankBoard(data, b.id, period) }))
+        .filter((m) => m.r.people.length || m.r.others.length);
+      if (!metrics.length) return "";
+      const countBoard = metrics.find((m) => m.b.metric === "count");
+      const entries = countBoard ? countBoard.r.total : null;
+      const metricsHtml = metrics
+        .map(({ b, r }) => {
+          const rows = [...r.people, ...r.others]
+            .map((e) => {
+              const medal = e.person ? (r.contested && e.rank <= 3 ? MEDALS[e.rank - 1] : e.rank === 1 ? "•" : e.rank) : "·";
+              const share = r.total ? Math.round((e.value / r.total) * 100) : 0;
+              return `<div class="comp-row ${e.person && r.contested && e.rank === 1 ? "leader" : ""} ${e.person ? "" : "other"}">
+                  <span class="comp-rank">${medal}</span>
+                  ${avatarHtml(e)}
+                  <span class="comp-name">${esc(e.name)}</span>
+                  <div class="comp-bar-track"><div class="comp-bar" style="width:${r.max ? (e.value / r.max) * 100 : 0}%;background:${e.color}"></div></div>
+                  <span class="comp-val">${fmtBoardValue(b, e.value)}</span>
+                  <span class="comp-share">${share}%</span>
+                </div>`;
+            })
+            .join("");
+          const tie = r.contested && r.leaders.length > 1 ? `<span class="badge">${t("tie")}</span>` : "";
+          return `<div class="comp-metric"><div class="comp-metric-label">${t(b.label)} ${tie}</div>${rows}</div>`;
+        })
         .join("");
       return `<div class="comp-card">
-          <div class="comp-card-head">${ct.icon} ${t(ct.label)}</div>
-          ${countsHtml}
-          ${fieldsHtml}
+          <div class="comp-card-head">${ct.icon} ${t(ct.label)}${entries != null ? `<span class="comp-card-total">${entries} ${t("total")}</span>` : ""}</div>
+          ${metricsHtml}
         </div>`;
     })
     .join("");
+  return `<section class="comp-section">
+      <h2>📊 ${t("By category")} <small>${compPeriodTitle(period)}</small></h2>
+      ${cards ? `<div class="comp-cards">${cards}</div>` : `<p class="muted-note">${t("Nothing logged in this period yet.")}</p>`}
+    </section>`;
+}
+
+// ----- choose what's shown -----
+
+function renderCompetitionConfig() {
+  const c = state.competition;
+  const el = document.getElementById("competition-config");
+  el.classList.toggle("hidden", !c.configOpen);
+  if (!c.configOpen) return;
+  const data = c.data;
+  el.innerHTML = `
+    <div class="comp-config-head">
+      <strong>${t("Choose what to show")}</strong>
+      <button type="button" class="btn secondary" id="comp-show-all">${t("Show all")}</button>
+    </div>
+    <div class="comp-config-note">${t("Saved on this device. Hidden categories are left out of the standings and points too.")}</div>
+    ${data.chore_types
+      .map((ct) => {
+        const hiddenN = ct.boards.filter((b) => c.hidden.has(b.id)).length;
+        return `<div class="cfg-cat">
+          <label class="switch-label"><input type="checkbox" class="cfg-cat-box" data-cat="${ct.key}" ${hiddenN < ct.boards.length ? "checked" : ""}>
+            <strong>${ct.icon} ${t(ct.label)}</strong></label>
+          <div class="cfg-boards">${ct.boards
+            .map(
+              (b) => `<label class="cfg-board"><input type="checkbox" data-board="${b.id}" ${c.hidden.has(b.id) ? "" : "checked"}> ${t(b.label)}${b.unit && b.display !== "duration" ? ` <span class="muted">(${esc(b.unit)})</span>` : ""}</label>`
+            )
+            .join("")}</div>
+        </div>`;
+      })
+      .join("")}`;
+
+  el.querySelectorAll(".cfg-cat-box").forEach((box) => {
+    const ct = data.chore_types.find((x) => x.key === box.dataset.cat);
+    const hiddenN = ct.boards.filter((b) => c.hidden.has(b.id)).length;
+    box.indeterminate = hiddenN > 0 && hiddenN < ct.boards.length; // some, not all, boards shown
+    box.addEventListener("change", () => {
+      ct.boards.forEach((b) => (box.checked ? c.hidden.delete(b.id) : c.hidden.add(b.id)));
+      saveCompHidden();
+      renderCompetition();
+    });
+  });
+  el.querySelectorAll("[data-board]").forEach((box) => {
+    box.addEventListener("change", () => {
+      if (box.checked) c.hidden.delete(box.dataset.board);
+      else c.hidden.add(box.dataset.board);
+      saveCompHidden();
+      renderCompetition();
+    });
+  });
+  el.querySelector("#comp-show-all").addEventListener("click", () => {
+    c.hidden.clear();
+    saveCompHidden();
+    renderCompetition();
+  });
 }
 
 // ---------- stats: overview + detail ----------
@@ -2750,8 +3104,48 @@ function syncPushLang() {
   }).catch(() => {});
 }
 
+// What the server says about delivery: is the checker alive, what's scheduled
+// and when, and the latest sends/receipts. Best-effort - Settings works
+// without it.
+async function loadPushStatus() {
+  try {
+    state.pushStatus = await api("/api/push/status");
+  } catch (err) {
+    state.pushStatus = null;
+  }
+}
+
+// English has no dictionary (the source strings *are* English), so these
+// prefixed Ukrainian keys need their English text spelled out here.
+const PUSH_LOG_EN = {
+  sent: "sent",
+  resend: "re-sent (no receipt yet)",
+  retry: "retried",
+  received: "received on device",
+  error: "failed",
+  gone: "device removed",
+  test: "test sent",
+  "test-scheduled": "test scheduled",
+  resubscribed: "subscription renewed",
+};
+
+function tp(key, en) {
+  return state.lang === "uk" ? t(key) : en;
+}
+
+function pushLogLine(e) {
+  const ct = e.key && choreType(e.key);
+  const what = ct ? `${ct.icon} ` : "";
+  const kind = tp(`push log: ${e.kind}`, PUSH_LOG_EN[e.kind] || e.kind);
+  const detail = e.detail && !/^due /.test(e.detail) ? ` (${e.detail})` : "";
+  return `<div class="push-log-row ${e.kind === "error" || e.kind === "gone" ? "bad" : e.kind === "received" ? "good" : ""}">
+      <span class="push-log-time">${fmtClockTime(e.t)}</span> ${what}${kind}${detail}</div>`;
+}
+
 function renderPushBox() {
   const box = document.getElementById("push-box");
+  // the box is rebuilt on every status refresh - don't collapse a log being read
+  const logWasOpen = !!(box.querySelector(".push-log") && box.querySelector(".push-log").open);
   const reason = pushUnsupportedReason();
   let inner;
   if (reason) {
@@ -2759,19 +3153,35 @@ function renderPushBox() {
   } else if (Notification.permission === "denied") {
     inner = `<div class="push-note">${t("Notifications are blocked for this site - allow them in your browser's site settings.")}</div>`;
   } else if (state.push && state.push.subscribed) {
+    const ps = state.pushStatus;
+    let health = "";
+    if (ps) {
+      health = ps.loop.running
+        ? `<div class="push-health ok">✅ ${t("Server checks every {n} s - last check {s} s ago").replace("{n}", ps.loop.check_every_seconds).replace("{s}", ps.loop.seconds_since_check ?? "?")}</div>`
+        : `<div class="push-health bad">⚠ ${t("Server check is not running - see the server log")}${ps.loop.last_error ? `: ${ps.loop.last_error}` : ""}</div>`;
+    }
+    const log = ps && ps.recent.length
+      ? `<details class="push-log"><summary>${t("Delivery log")}</summary>${ps.recent.slice(0, 8).map(pushLogLine).join("")}</details>`
+      : "";
     inner = `
       <div class="push-status">✅ ${t("Enabled on this device")}</div>
+      ${health}
       <div class="row">
         <button type="button" class="btn secondary" id="push-test-btn">${t("Send test")}</button>
+        <button type="button" class="btn secondary" id="push-test-later-btn">${t("Test in 1 min")}</button>
         <button type="button" class="btn secondary" id="push-disable-btn">${t("Disable")}</button>
       </div>
-      <div class="push-note">${t("Choose which chores notify this device in the list below.")}</div>`;
+      <div class="push-note">${t("Test in 1 min: lock your phone right after tapping it - if it arrives, reminders will reach you while it sleeps.")}</div>
+      ${log}
+      <div class="push-note">${t("Choose which chores notify this device in the list below.")}</div>
+      <div class="push-note">${t("Not arriving while the phone is locked? On Android, set battery usage for the browser (or installed app) to Unrestricted. On iPhone, the app must be added to the Home Screen.")}</div>`;
   } else {
     inner = `
       <div class="push-note">${t("Get a notification on this device when a reminder is due.")}</div>
       <button type="button" class="btn" id="push-enable-btn">${t("Enable on this device")}</button>`;
   }
   box.innerHTML = inner;
+  if (logWasOpen && box.querySelector(".push-log")) box.querySelector(".push-log").open = true;
 
   const guard = (fn) => async () => {
     try {
@@ -2779,6 +3189,7 @@ function renderPushBox() {
     } catch (err) {
       toast(t("Error: ") + err.message);
     }
+    await loadPushStatus();
     renderPushBox();
     renderReminderRows();
   };
@@ -2786,17 +3197,55 @@ function renderPushBox() {
   if (enableBtn) enableBtn.addEventListener("click", guard(enablePush));
   const disableBtn = box.querySelector("#push-disable-btn");
   if (disableBtn) disableBtn.addEventListener("click", guard(disablePush));
+  const sendTest = (delay) => async () => {
+    try {
+      await api("/api/push/test", { method: "POST", body: JSON.stringify({ endpoint: state.push.endpoint, delay_seconds: delay }) });
+      toast(delay ? "Test scheduled - lock your phone now" : "Test notification sent");
+    } catch (err) {
+      toast(t("Error: ") + err.message);
+    }
+    setTimeout(refreshPushStatus, 1500);
+  };
   const testBtn = box.querySelector("#push-test-btn");
-  if (testBtn) {
-    testBtn.addEventListener("click", async () => {
-      try {
-        await api("/api/push/test", { method: "POST", body: JSON.stringify({ endpoint: state.push.endpoint }) });
-        toast("Test notification sent");
-      } catch (err) {
-        toast(t("Error: ") + err.message);
-      }
-    });
+  if (testBtn) testBtn.addEventListener("click", sendTest(0));
+  const laterBtn = box.querySelector("#push-test-later-btn");
+  if (laterBtn) laterBtn.addEventListener("click", sendTest(60));
+}
+
+// One line under each reminder: when its push goes out, or what happened to it.
+function pushScheduleText(ct) {
+  const st = state.pushStatus && state.pushStatus.schedule.find((e) => e.key === ct.key);
+  if (!st || !ct.reminder_enabled) return "";
+  if ((state.push && state.push.muted_types || []).includes(ct.key)) return "";
+  if (st.state === "scheduled") {
+    const at = new Date(st.notify_at);
+    return at > new Date()
+      ? `${t("Push at")} ${fmtClockTime(at)} (${fmtRelative(st.notify_at, "in", true)})`
+      : t("Push due now");
   }
+  if (st.state === "sent") {
+    return `${t("Push sent")} ${fmtClockTime(st.sent_at)} · ${st.received ? `✓ ${tp("push: received on device", "received on device")}` : tp("push: not confirmed yet", "not confirmed yet")}`;
+  }
+  if (st.state === "missed") return t("Already overdue - no push for this one");
+  return "";
+}
+
+function updatePushScheduleTexts() {
+  document.querySelectorAll(".push-sched").forEach((el) => {
+    const ct = choreType(el.dataset.key);
+    el.textContent = ct ? pushScheduleText(ct) : "";
+  });
+}
+
+// While Settings is open: keep the delivery status fresh (the log and "push at"
+// lines) without rebuilding the rows, which would eat anything being typed.
+async function refreshPushStatus() {
+  if (!(state.push && state.push.subscribed)) return;
+  const onSettings = document.getElementById("tab-settings").classList.contains("active");
+  if (!onSettings) return;
+  await loadPushStatus();
+  renderPushBox();
+  updatePushScheduleTexts();
 }
 
 // ---------- settings ----------
@@ -2807,12 +3256,14 @@ async function loadSettings() {
   loadPeopleSettings();
   await loadChoreTypesManager();
   await loadPushState();
+  if (state.push && state.push.subscribed) await loadPushStatus();
   renderPushBox();
   renderReminderRows();
 }
 
-// One row per chore type: master reminder on/off, the interval, the session
-// window (where it applies), and whether *this device* gets pushes for it.
+// One row per chore type: master reminder on/off, the interval, how many
+// minutes early to push, the session window (where it applies), and whether
+// *this device* gets pushes for it.
 function renderReminderRows() {
   const list = document.getElementById("settings-list");
   list.innerHTML = "";
@@ -2840,12 +3291,17 @@ function renderReminderRows() {
               : ""
         }
         ${
+          hasReminder
+            ? `<label>${t("Notify")} <input type="number" min="0" max="1440" class="lead-input" style="width:72px" value="${ct.push_lead_minutes || 0}"> ${t("min before due")}</label>`
+            : ""
+        }
+        ${
           ct.session_window_configurable
             ? `<label>${t("Session window")} <input type="number" min="0" class="session-window-input" style="width:92px" value="${ct.session_window_minutes ?? ""}"> ${t("min")}</label>`
             : ""
         }
         ${
-          ct.interval_configurable || ct.session_window_configurable
+          hasReminder || ct.session_window_configurable
             ? `<button class="btn secondary save-settings-btn">${t("Save")}</button>`
             : ""
         }
@@ -2854,7 +3310,8 @@ function renderReminderRows() {
             ? `<label class="switch-label push-toggle"><input type="checkbox" ${muted.has(ct.key) ? "" : "checked"}> 🔔 ${t("Push")}</label>`
             : ""
         }
-      </div>`;
+      </div>
+      ${pushOn && hasReminder ? `<div class="push-sched" data-key="${ct.key}">${pushScheduleText(ct)}</div>` : ""}`;
 
     const reminderToggle = row.querySelector(".reminder-toggle");
     if (reminderToggle) {
@@ -2873,6 +3330,7 @@ function renderReminderRows() {
         toast("Saved");
         await loadChoreTypes();
         loadDashboard();
+        refreshPushStatus();
       });
     }
 
@@ -2880,15 +3338,23 @@ function renderReminderRows() {
     if (saveBtn) {
       saveBtn.addEventListener("click", async () => {
         const intervalInput = row.querySelector(".interval-input");
+        const leadInput = row.querySelector(".lead-input");
         const sessionInput = row.querySelector(".session-window-input");
         // only send what this row actually has, so saving one never resets the other
         const body = {};
         if (intervalInput) body.interval_minutes = intervalInput.value !== "" ? Number(intervalInput.value) : null;
+        if (leadInput) body.push_lead_minutes = leadInput.value !== "" ? Math.max(0, Number(leadInput.value)) : 0;
         if (sessionInput) body.session_window_minutes = sessionInput.value !== "" ? Number(sessionInput.value) : null;
-        await api(`/api/chore-types/${ct.key}/settings`, { method: "PUT", body: JSON.stringify(body) });
+        try {
+          await api(`/api/chore-types/${ct.key}/settings`, { method: "PUT", body: JSON.stringify(body) });
+        } catch (err) {
+          toast(t("Error: ") + err.message);
+          return;
+        }
         toast("Saved");
         await loadChoreTypes();
         loadDashboard();
+        refreshPushStatus();
       });
     }
 
@@ -2905,6 +3371,7 @@ function renderReminderRows() {
           });
           state.push = { ...res, endpoint: state.push.endpoint };
           toast("Saved");
+          updatePushScheduleTexts();
         } catch (err) {
           pushToggle.checked = !pushToggle.checked;
           toast(t("Error: ") + err.message);
@@ -2934,14 +3401,10 @@ applyStaticTranslations();
 if (!STATS_PERIODS.some((c) => c.v === state.stats.days)) state.stats.days = "90";
 if (!STATS_FORECASTS.some((c) => c.v === state.stats.forecast)) state.stats.forecast = "0";
 
-const competitionDaysSelect = document.getElementById("competition-days");
-const savedCompetitionDays = getCookie("bm_competition_days");
-if (savedCompetitionDays && [...competitionDaysSelect.options].some((o) => o.value === savedCompetitionDays)) {
-  competitionDaysSelect.value = savedCompetitionDays;
-}
-competitionDaysSelect.addEventListener("change", () => {
-  setCookie("bm_competition_days", competitionDaysSelect.value);
-  loadCompetition();
+if (!COMP_PERIODS.some((p) => p.v === state.competition.period)) state.competition.period = "7";
+document.getElementById("competition-config-btn").addEventListener("click", () => {
+  state.competition.configOpen = !state.competition.configOpen;
+  if (state.competition.data) renderCompetition();
 });
 
 async function loadPeople() {
@@ -2953,6 +3416,11 @@ initTabs();
   await Promise.all([loadChoreTypes(), loadPeople()]);
   await loadDashboard();
   setInterval(loadDashboard, 30000);
+  // If this browser is subscribed but the server has lost it (database reset,
+  // subscription rotated), quietly register it again - otherwise reminders
+  // stop without any sign of it until Settings is next opened.
+  loadPushState();
+  setInterval(refreshPushStatus, 15000);
 })();
 
 if ("serviceWorker" in navigator) {
