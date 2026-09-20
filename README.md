@@ -139,6 +139,13 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
 - **Installable as an app (PWA)**: add it to your phone's home screen
   (Safari: Share → Add to Home Screen; Chrome: menu → Install app) for a
   full-screen, app-like experience with an icon - no app store needed.
+- **Works on phone and desktop**: on phones the tabs become an icon tab bar
+  that always shows all five (English and Ukrainian, down to 320px wide),
+  touch screens get 44px tap targets, dialogs keep Save/Close pinned in
+  view, and every checkpoint field is labelled. On wide screens the header
+  lines up with the content, Settings splits into two columns, Stats charts
+  sit side by side, and history is a readable width with a heading per day.
+  Esc closes dialogs, keyboard focus is visible, and pinch-zoom is allowed.
 - **Home Assistant custom integration**, installable via HACS as a
   custom repository: sensors for every chore type's status/today totals,
   buttons for every quick action, and services to log/edit/delete events
@@ -232,9 +239,10 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   - **By category**: ranked bars per chore type with medals, values and
     each person's share, for the selected period. Entries logged with no
     person are shown greyed and never take a place;
-  - **Customize** (⚙): pick which categories - and which individual
+  - **Settings → Competition**: pick which categories - and which individual
     measures within them, e.g. switch off "Peed during the change" - count
-    in the competition. This is a **household-wide** rule stored on the
+    in the competition. (The Competition tab shows a "N categories switched
+    off" note that jumps straight there.) This is a **household-wide** rule stored on the
     server, so every device shows the same competition (what is worth
     competing over shouldn't differ from phone to phone). Switched-off
     categories are also left out of the standings and points; anything new

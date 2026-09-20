@@ -231,6 +231,7 @@ const I18N = {
     "day": "день",
     "feed": "годування",
     "Sources:": "Джерела:",
+    "How this works": "Як це працює",
     // competition
     "Standings": "Турнірна таблиця",
     "Who leads what": "Хто в чому лідирує",
@@ -239,12 +240,11 @@ const I18N = {
     "pts": "очок",
     "entries": "записів",
     "tie": "порівну",
-    "Customize": "Налаштувати",
-    "hidden": "приховано",
     "Which categories count": "Які категорії враховуються",
     "Show all": "Показати все",
     "Applies to everyone, on every device. Categories switched off are left out of the standings and points too.": "Діє для всіх і на всіх пристроях. Вимкнені категорії не враховуються в таблиці й очках.",
-    "Every category is switched off - turn some on under Customize.": "Усі категорії вимкнено - увімкніть щось у «Налаштувати».",
+    "Every category is switched off - turn some on in Settings → Competition.": "Усі категорії вимкнено - увімкніть щось у Налаштування → Змагання.",
+    "{n} categories switched off in the competition - change in Settings": "{n} категорій вимкнено в змаганні - змінити в Налаштуваннях",
     "Nothing logged in this period yet.": "За цей період ще нічого не записано.",
     "Nothing contested in this period yet - it takes two people logging the same thing.": "За цей період ще немає змагання - потрібно, щоб двоє людей записували те саме.",
     "3 points for 1st, 2 for 2nd and 1 for 3rd in every category where at least two people are competing. Scores count who logged each entry.": "3 очки за 1-е місце, 2 за 2-е і 1 за 3-є в кожній категорії, де змагаються щонайменше двоє. Рахується, хто зробив запис.",
@@ -312,7 +312,7 @@ const I18N_NO_SUMMARY = new Set([
   "days", "Sex", "Boy", "Girl", "as of", "Latest", "day", "feed", "per feed", "per day", "feeds/day",
   "Calculate", "Recalculate", "Sources:", "Healthy range", "At a glance",
   "Notify",
-  "Overall", "pts", "entries", "tie", "hidden", "Standings",
+  "Overall", "pts", "entries", "tie", "Standings",
 ]);
 const I18N_SUMMARY_KEYS = {};
 for (const lang of Object.keys(I18N)) {
@@ -386,7 +386,6 @@ const state = {
     data: null,
     period: getCookie("bm_competition_period") || "7",
     hidden: new Set(), // board ids the household excluded - shared, from the server
-    configOpen: false,
   },
   // Stats page selection; period/forecast persist in cookies. Validated in init.
   stats: { key: null, days: getCookie("bm_stats_days") || "90", forecast: getCookie("bm_stats_forecast") || "0" },
@@ -552,7 +551,7 @@ function renderBabyInfoBar(profile, statuses) {
   bar.classList.remove("hidden");
   const name = profile && profile.name;
   bar.innerHTML = `
-    ${name ? `<div class="baby-name">👶 ${name}</div>` : ""}
+    ${name ? `<div class="baby-name">👶 ${esc(name)}</div>` : ""}
     <div class="info-chips">${chips.join("")}</div>
   `;
 }
@@ -682,8 +681,7 @@ async function loadDashboard() {
       if (parts.length) todayHtml = `<div class="today">${t("Today:")} ${parts.join(", ")}</div>`;
     }
     card.innerHTML = `
-      <div class="icon">${s.icon}</div>
-      <div class="label">${t(s.label)}</div>
+      <div class="card-head"><div class="icon">${s.icon}</div><div class="label">${t(s.label)}</div></div>
       ${lastHtml}
       ${dueHtml}
       ${todayHtml}
@@ -1020,7 +1018,7 @@ function buildFieldHtml(field, value) {
   if (field.type === "entries") {
     return `<div class="field entries-field" data-name="${field.name}">
       <label>${t(field.label)}</label>
-      ${field.help ? `<div class="field-help">${field.help}</div>` : ""}
+      ${field.help ? `<details class="field-help"><summary>ⓘ ${t("How this works")}</summary>${field.help}</details>` : ""}
       <div class="entries-rows"></div>
       <button type="button" class="btn secondary add-entry-btn">${t("+ Add checkpoint")}</button>
     </div>`;
@@ -1053,21 +1051,28 @@ function attachNumberListHandlers(form, field, initialValues, onMutate) {
 }
 
 function buildEntryRowHtml(entryFields, entry) {
-  let inputsHtml = `<input type="datetime-local" class="entry-timestamp" title="${t("Time")}">`;
+  // Every input gets a visible label: a placeholder disappears once there's a
+  // value, leaving a bare "124" nobody can tell is grams or millilitres. The
+  // row is a two-column grid; the time and free-text fields take a full line
+  // (a datetime-local input is too wide to squeeze into half a phone).
+  const cell = (label, control, wide = false) =>
+    `<label class="entry-cell ${wide ? "wide" : ""}"><span class="entry-cell-label">${label}</span>${control}</label>`;
+  let html = cell(t("Time"), `<input type="datetime-local" class="entry-timestamp">`, true);
   entryFields.forEach((f) => {
     const val = entry ? entry[f.name] : f.default;
+    const label = `${t(f.label)}${f.unit ? ` (${f.unit})` : ""}`;
     if (f.type === "select") {
       const opts = f.options
         .map((o) => `<option value="${o.value}" ${val === o.value ? "selected" : ""}>${t(o.label)}</option>`)
         .join("");
-      inputsHtml += `<select class="entry-field" data-name="${f.name}">${opts}</select>`;
+      html += cell(label, `<select class="entry-field" data-name="${f.name}">${opts}</select>`);
     } else if (f.type === "number") {
-      inputsHtml += `<input type="number" step="any" class="entry-field" data-name="${f.name}" placeholder="${t(f.label)}${f.unit ? ` (${f.unit})` : ""}" value="${val ?? ""}">`;
+      html += cell(label, `<input type="number" step="any" inputmode="decimal" class="entry-field" data-name="${f.name}" value="${val ?? ""}">`);
     } else {
-      inputsHtml += `<input type="text" class="entry-field" data-name="${f.name}" placeholder="${t(f.label)}" value="${val ?? ""}">`;
+      html += cell(label, `<input type="text" class="entry-field" data-name="${f.name}" value="${esc(val ?? "")}">`, true);
     }
   });
-  return `<div class="entry-row">${inputsHtml}<button type="button" class="icon-btn remove-entry">✕</button></div>`;
+  return `<div class="entry-row">${html}<button type="button" class="icon-btn remove-entry" title="${t("Delete")}">✕</button></div>`;
 }
 
 function attachEntriesHandlers(form, field, initialEntries, onMutate) {
@@ -1217,7 +1222,7 @@ function openForm(choreTypeKey, mode, event) {
       <label for="f_person">${t("Person")}</label>
       <select id="f_person" name="person_id">
         <option value="">${t("Unassigned")}</option>
-        ${state.people.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}
+        ${state.people.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}
       </select>
     </div>`;
   html += hasEntries
@@ -1361,19 +1366,33 @@ async function loadHistory() {
   events.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
   const list = document.getElementById("history-list");
   list.innerHTML = "";
+  const locale = state.lang === "uk" ? "uk-UA" : undefined;
+  const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const todayKey = dayKey(new Date());
+  const yesterdayKey = dayKey(new Date(Date.now() - 86400000));
+  let lastDay = null;
   events.forEach((ev) => {
     const ct = choreType(ev.chore_type);
+    const d = new Date(ev.timestamp);
+    // a heading per day, so each row only needs its time
+    if (dayKey(d) !== lastDay) {
+      lastDay = dayKey(d);
+      const head = document.createElement("div");
+      head.className = "history-day";
+      const nice = d.toLocaleDateString(locale, { weekday: "long", month: "short", day: "numeric" });
+      head.textContent = lastDay === todayKey ? `${t("Today")} · ${nice}` : lastDay === yesterdayKey ? `${t("Yesterday")} · ${nice}` : nice;
+      list.appendChild(head);
+    }
     const item = document.createElement("div");
     item.className = "history-item";
-    const d = new Date(ev.timestamp);
     item.innerHTML = `
-      <div>
-        <div><strong>${ct.icon} ${tSummary(ev.summary)}</strong>${ev.person_name ? ` <span class="person-pill">${ev.person_name}</span>` : ""}</div>
-        <div class="meta">${d.toLocaleString(state.lang === "uk" ? "uk-UA" : undefined)}${ev.notes ? " · " + ev.notes : ""}</div>
+      <div class="history-main">
+        <div><strong>${ev.summary.startsWith(ct.icon) ? "" : `${ct.icon} `}${tSummary(esc(ev.summary))}</strong>${ev.person_name ? ` <span class="person-pill">${esc(ev.person_name)}</span>` : ""}</div>
+        <div class="meta">${d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}${ev.notes ? " · " + esc(ev.notes) : ""}</div>
       </div>
       <div class="actions">
-        <button class="icon-btn edit-btn">✏️</button>
-        <button class="icon-btn del-btn">🗑️</button>
+        <button class="icon-btn edit-btn" title="${t("Edit")}">✏️</button>
+        <button class="icon-btn del-btn" title="${t("Delete")}">🗑️</button>
       </div>`;
     item.querySelector(".edit-btn").addEventListener("click", () => openForm(ev.chore_type, "edit", ev));
     item.querySelector(".del-btn").addEventListener("click", () => deleteEvent(ev.id));
@@ -1567,10 +1586,10 @@ function buildChart(cfg) {
     const tx = xFor(today);
     if (hasFuture) {
       marker += `<rect x="${tx.toFixed(1)}" y="${padTop}" width="${(w - tx).toFixed(1)}" height="${plotH}" fill="currentColor" opacity="0.05"></rect>`;
-      marker += `<text x="${(tx + 5).toFixed(1)}" y="${padTop - 8}" font-size="9.5" fill="currentColor" opacity="0.7">${t("Forecast")} →</text>`;
+      marker += `<text x="${(tx + 5).toFixed(1)}" y="${padTop - 8}" font-size="11" fill="currentColor" opacity="0.7">${t("Forecast")} →</text>`;
     }
     marker += `<line x1="${tx.toFixed(1)}" x2="${tx.toFixed(1)}" y1="${padTop}" y2="${h - padBottom}" stroke="currentColor" stroke-width="1" stroke-dasharray="2 3" opacity="0.4"></line>`;
-    marker += `<text x="${(tx - 4).toFixed(1)}" y="${padTop - 8}" font-size="9.5" text-anchor="end" fill="currentColor" opacity="0.7">${t("today")}</text>`;
+    marker += `<text x="${(tx - 4).toFixed(1)}" y="${padTop - 8}" font-size="11" text-anchor="end" fill="currentColor" opacity="0.7">${t("today")}</text>`;
   }
 
   // --- actual values ---
@@ -1601,7 +1620,7 @@ function buildChart(cfg) {
     }
     if (labelAll || isEnd) {
       const anchor = i === 0 && actual.length > 1 ? "start" : i === actual.length - 1 && actual.length > 1 ? "end" : "middle";
-      actualSvg += `<text x="${x.toFixed(1)}" y="${(y - 9).toFixed(1)}" font-size="10" text-anchor="${anchor}" fill="currentColor" font-weight="${i === actual.length - 1 ? 600 : 400}">${meta.fmt(p.value)}</text>`;
+      actualSvg += `<text x="${x.toFixed(1)}" y="${(y - 9).toFixed(1)}" font-size="11" text-anchor="${anchor}" fill="currentColor" font-weight="${i === actual.length - 1 ? 600 : 400}">${meta.fmt(p.value)}</text>`;
     }
   });
   partial.forEach((p) => {
@@ -1616,7 +1635,7 @@ function buildChart(cfg) {
     const ex = xFor(end.date);
     const ey = yFor(end.value);
     forecastSvg += `<circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="3.4" fill="var(--surface)" stroke="var(--primary)" stroke-width="1.6"></circle>`;
-    forecastSvg += `<text x="${ex.toFixed(1)}" y="${(ey - 9).toFixed(1)}" font-size="10" text-anchor="end" fill="currentColor" opacity="0.85">${meta.fmt(end.value)}</text>`;
+    forecastSvg += `<text x="${ex.toFixed(1)}" y="${(ey - 9).toFixed(1)}" font-size="11" text-anchor="end" fill="currentColor" opacity="0.85">${meta.fmt(end.value)}</text>`;
   }
 
   // --- x-axis labels ---
@@ -1625,7 +1644,7 @@ function buildChart(cfg) {
   for (let i = 0; i <= tickN; i++) {
     const ds = new Date(minMs + Math.round((spanDays * i) / tickN) * DAY_MS).toISOString().slice(0, 10);
     const anchor = i === 0 ? "start" : i === tickN ? "end" : "middle";
-    xLabels += `<text x="${xFor(ds).toFixed(1)}" y="${h - 9}" font-size="9.5" text-anchor="${anchor}" fill="currentColor" opacity="0.65">${fmtShortDate(ds)}</text>`;
+    xLabels += `<text x="${xFor(ds).toFixed(1)}" y="${h - 9}" font-size="11" text-anchor="${anchor}" fill="currentColor" opacity="0.65">${fmtShortDate(ds)}</text>`;
   }
 
   // --- hit targets (hover on desktop, tap on phones) ---
@@ -1635,7 +1654,7 @@ function buildChart(cfg) {
     .join("");
 
   const axisSvg = `<svg class="chart-axis" width="${axisW}" height="${h}" viewBox="0 0 ${axisW} ${h}">${ticks
-    .map((tv) => `<text x="${axisW - 6}" y="${(yS(tv) + 3.5).toFixed(1)}" text-anchor="end" font-size="9.5" fill="currentColor" opacity="0.65">${meta.axisFmt(tv)}</text>`)
+    .map((tv) => `<text x="${axisW - 6}" y="${(yS(tv) + 3.5).toFixed(1)}" text-anchor="end" font-size="11" fill="currentColor" opacity="0.65">${meta.axisFmt(tv)}</text>`)
     .join("")}</svg>`;
   const plotSvg = `<svg class="chart-plot" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${grid}${marker}${band}${forecastSvg}${actualSvg}${xLabels}<line class="cursor" y1="${padTop}" y2="${h - padBottom}" stroke="currentColor" stroke-width="1" opacity="0.5" style="display:none"></line>${hits}</svg>`;
 
@@ -1871,7 +1890,7 @@ async function updateCompHidden(hide, show) {
   const before = new Set(c.hidden);
   hide.forEach((id) => c.hidden.add(id));
   show.forEach((id) => c.hidden.delete(id));
-  renderCompetition(); // optimistic: the UI answers instantly
+  refreshCompetitionViews(); // optimistic: the UI answers instantly
   try {
     const res = await api("/api/competition/hidden", { method: "PUT", body: JSON.stringify({ hide, show }) });
     c.hidden = new Set(res.hidden);
@@ -1879,16 +1898,38 @@ async function updateCompHidden(hide, show) {
     c.hidden = before;
     toast(t("Error: ") + err.message);
   }
-  renderCompetition();
+  refreshCompetitionViews();
+}
+
+async function fetchCompetitionData() {
+  const data = await api("/api/competition");
+  state.competition.data = data;
+  state.competition.hidden = new Set(data.hidden || []);
 }
 
 async function loadCompetition() {
   const box = document.getElementById("competition-content");
   if (!state.competition.data) box.innerHTML = `<p class="muted-note">${t("Loading…")}</p>`;
-  const data = await api("/api/competition");
-  state.competition.data = data;
-  state.competition.hidden = new Set(data.hidden || []);
+  await fetchCompetitionData();
   renderCompetition();
+}
+
+// The category switches live in Settings (they are a household rule, not a
+// view option), so Settings loads the data itself.
+async function loadCompetitionConfig() {
+  try {
+    await fetchCompetitionData();
+  } catch (err) {
+    return; // Settings is still usable without it
+  }
+  renderCompetitionConfig();
+}
+
+// re-draw everything that shows which categories count
+function refreshCompetitionViews() {
+  if (!state.competition.data) return;
+  renderCompetition();
+  renderCompetitionConfig();
 }
 
 function renderCompetition() {
@@ -1904,10 +1945,6 @@ function renderCompetition() {
     setCookie("bm_competition_period", v);
     renderCompetition();
   });
-  const cfgBtn = document.getElementById("competition-config-btn");
-  cfgBtn.innerHTML = `⚙ ${t("Customize")}${hiddenCount ? ` <span class="badge warn">${hiddenCount} ${t("hidden")}</span>` : ""}`;
-  cfgBtn.classList.toggle("active", c.configOpen);
-  renderCompetitionConfig();
 
   if (!data.people.length) {
     box.innerHTML = `<p class="muted-note">${t("Add people in Settings to compare stats.")}</p>`;
@@ -1917,12 +1954,23 @@ function renderCompetition() {
     box.innerHTML = `<p class="muted-note">${t("No data for this period.")}</p>`;
     return;
   }
+  // which categories count is set under Settings -> Competition; say so here
+  // so a missing category isn't a mystery, and make the way there one tap
+  const note = hiddenCount
+    ? `<button type="button" class="comp-hidden-note" id="comp-hidden-note">⚙ ${t("{n} categories switched off in the competition - change in Settings").replace("{n}", hiddenCount)}</button>`
+    : "";
   if (boards.every((b) => b.hidden)) {
-    box.innerHTML = `<p class="muted-note">${t("Every category is switched off - turn some on under Customize.")}</p>`;
-    return;
+    box.innerHTML = `${note}<p class="muted-note">${t("Every category is switched off - turn some on in Settings → Competition.")}</p>`;
+  } else {
+    box.innerHTML = note + standingsHtml(data, c.period) + leadersTableHtml(data, c.period) + categoryCardsHtml(data, c.period);
   }
-
-  box.innerHTML = standingsHtml(data, c.period) + leadersTableHtml(data, c.period) + categoryCardsHtml(data, c.period);
+  const noteBtn = box.querySelector("#comp-hidden-note");
+  if (noteBtn) {
+    noteBtn.addEventListener("click", () => {
+      document.querySelector('[data-tab="settings"]').click();
+      setTimeout(() => document.getElementById("competition-config").scrollIntoView({ behavior: "smooth", block: "start" }), 400);
+    });
+  }
 }
 
 // ----- standings + podium -----
@@ -2071,9 +2119,8 @@ function categoryCardsHtml(data, period) {
 function renderCompetitionConfig() {
   const c = state.competition;
   const el = document.getElementById("competition-config");
-  el.classList.toggle("hidden", !c.configOpen);
-  if (!c.configOpen) return;
   const data = c.data;
+  if (!data) return;
   el.innerHTML = `
     <div class="comp-config-head">
       <strong>${t("Which categories count")}</strong>
@@ -2611,7 +2658,7 @@ async function loadProfile() {
     <div class="settings-row profile-row">
       <div><strong>👶 ${t("Baby profile")}</strong>${p.age_days != null ? ` <span class="age-pill">${p.age_days} ${t("days old")}</span>` : ""}</div>
       <div class="row">
-        <label>${t("Name")} <input type="text" id="profile-name" style="width:120px" value="${p.name || ""}"></label>
+        <label>${t("Name")} <input type="text" id="profile-name" style="width:120px" value="${esc(p.name || "")}"></label>
         <label>${t("Birth date")} <input type="date" id="profile-birthdate" value="${p.birth_date || ""}"></label>
         <label>${t("Birth weight (g)")} <input type="number" min="0" id="profile-birthweight" style="width:100px" value="${p.birth_weight_g ?? ""}"></label>
         <label title="${t("Picks the exact WHO growth curves; if not set, the healthy range spans both.")}">${t("Sex")}
@@ -2733,8 +2780,8 @@ function openChoreTypeBuilder(existing) {
     // behavior are code-defined
     const entriesField = existing.fields.find((f) => f.type === "entries");
     form.innerHTML = `
-      <div class="field"><label>Label</label><input type="text" id="ct-label" value="${existing.label}" required></div>
-      <div class="field"><label>Icon (emoji)</label><input type="text" id="ct-icon" value="${existing.icon}" required></div>
+      <div class="field"><label>Label</label><input type="text" id="ct-label" value="${esc(existing.label)}" required></div>
+      <div class="field"><label>Icon (emoji)</label><input type="text" id="ct-icon" value="${esc(existing.icon)}" required></div>
       ${entriesField ? `<div class="field"><label>Quick actions</label><div id="qa-section"></div></div>` : ""}
       <div class="form-actions">
         <button type="button" id="ct-cancel-btn" class="btn secondary">Cancel</button>
@@ -2759,8 +2806,8 @@ function openChoreTypeBuilder(existing) {
   } else {
     const fieldsRowsHtml = (existing ? existing.fields.filter((f) => !f.computed) : [null]).map(fieldBuilderRowHtml).join("");
     form.innerHTML = `
-      <div class="field"><label>Label</label><input type="text" id="ct-label" value="${existing ? existing.label : ""}" required></div>
-      <div class="field"><label>Icon (emoji)</label><input type="text" id="ct-icon" value="${existing ? existing.icon : "🍼"}" required></div>
+      <div class="field"><label>Label</label><input type="text" id="ct-label" value="${esc(existing ? existing.label : "")}" required></div>
+      <div class="field"><label>Icon (emoji)</label><input type="text" id="ct-icon" value="${esc(existing ? existing.icon : "🍼")}" required></div>
       ${!isCustomEdit ? `<div class="field"><label>Key (no spaces, used internally)</label><input type="text" id="ct-key" placeholder="e.g. tummy_time" required></div>` : ""}
       <div class="field"><label>Reminder interval (minutes, optional)</label><input type="number" min="0" id="ct-interval" value="${existing && existing.interval_minutes != null ? existing.interval_minutes : ""}"></div>
       <div class="field">
@@ -2955,7 +3002,7 @@ async function loadPeopleSettings() {
     const row = document.createElement("div");
     row.className = "person-row";
     row.innerHTML = `
-      <input type="text" class="person-name-input" value="${p.name}">
+      <input type="text" class="person-name-input" value="${esc(p.name)}">
       <button type="button" class="icon-btn person-delete-btn" title="${t("Delete")}">🗑️</button>
     `;
     const input = row.querySelector(".person-name-input");
@@ -3271,6 +3318,7 @@ async function loadSettings() {
   if (state.push && state.push.subscribed) await loadPushStatus();
   renderPushBox();
   renderReminderRows();
+  loadCompetitionConfig();
 }
 
 // One row per chore type: master reminder on/off, the interval, how many
@@ -3397,6 +3445,13 @@ function renderReminderRows() {
 // ---------- init ----------
 
 document.getElementById("modal-close").addEventListener("click", closeModal);
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const open = (id) => !document.getElementById(id).classList.contains("hidden");
+  if (open("due-modal-backdrop")) closeDueModal();
+  else if (open("ct-modal-backdrop")) closeChoreTypeModal();
+  else if (open("modal-backdrop")) closeModal();
+});
 document.getElementById("modal-backdrop").addEventListener("click", (e) => {
   if (e.target.id === "modal-backdrop") closeModal();
 });
@@ -3415,11 +3470,6 @@ if (!STATS_FORECASTS.some((c) => c.v === state.stats.forecast)) state.stats.fore
 
 if (!COMP_PERIODS.some((p) => p.v === state.competition.period)) state.competition.period = "7";
 setCookie("bm_comp_hidden", "", -1); // superseded by the shared, server-side list
-document.getElementById("competition-config-btn").addEventListener("click", () => {
-  state.competition.configOpen = !state.competition.configOpen;
-  if (state.competition.data) renderCompetition();
-});
-
 async function loadPeople() {
   state.people = await api("/api/people");
 }

@@ -1,4 +1,6 @@
 :root {
+  --page-w: 720px;
+  --page-pad: 1rem;
   --bg: #f6f6f9;
   --surface: #ffffff;
   --surface-2: #fbfbfe;
@@ -69,6 +71,9 @@ body {
 }
 
 .tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   background: none;
   border: none;
   padding: 0.7rem 0.9rem;
@@ -82,6 +87,32 @@ body {
   touch-action: manipulation;
   transition: color 0.15s ease;
 }
+.tab-ico { font-size: 1rem; line-height: 1; }
+.tab-label { min-width: 0; }
+
+/* Phones and small tablets: all five tabs share the bar, icon over label. The old single row
+   needed ~450px (~500px in Ukrainian) and simply ran off the screen, hiding
+   tabs and drawing its scrollbar over the underline. Columns are sized by
+   their content (a long label like "Налаштування" gets room from short ones)
+   with the leftover space shared out evenly. */
+@media (max-width: 699px) {
+  .topbar { padding-left: 0; padding-right: 0; }
+  .topbar h1 { padding: 0 1rem; }
+  .tabs { gap: 0; overflow: visible; }
+  .tab-btn {
+    flex: 1 1 auto;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.1rem;
+    padding: 0.4rem 0.25rem 0.45rem;
+    min-height: 52px;
+    min-width: 0;
+    font-size: 0.66rem;
+    letter-spacing: -0.01em;
+  }
+  .tab-ico { font-size: 1.25rem; }
+  .tab-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+}
 
 .tab-btn.active {
   color: var(--primary);
@@ -89,12 +120,13 @@ body {
   font-weight: 700;
 }
 
-main { max-width: 720px; margin: 0 auto; padding: 1.1rem 1rem; }
+main { max-width: var(--page-w); margin: 0 auto; padding: 1.1rem var(--page-pad); }
 @media (min-width: 900px) {
-  main { max-width: 1100px; padding: 1.5rem 1.5rem; }
+  :root { --page-w: 1100px; --page-pad: 1.5rem; }
+  main { padding-top: 1.5rem; padding-bottom: 1.5rem; }
 }
 @media (min-width: 1300px) {
-  main { max-width: 1300px; }
+  :root { --page-w: 1300px; }
 }
 
 .tab-panel { display: none; }
@@ -152,8 +184,6 @@ main { max-width: 720px; margin: 0 auto; padding: 1.1rem 1rem; }
 .info-chip .info-val { font-weight: 700; font-size: 1.05rem; }
 .info-chip .info-lbl { font-size: 0.68rem; opacity: 0.85; text-transform: uppercase; letter-spacing: 0.03em; }
 
-.card .icon { font-size: 1.8rem; }
-.card .label { font-weight: 600; }
 .card .today { color: var(--muted); font-size: 0.78rem; }
 .card .due { font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 0.4rem; justify-content: space-between; }
 .card .due.overdue { color: var(--danger); }
@@ -415,27 +445,17 @@ textarea { min-height: 3.5rem; resize: vertical; }
 
 .entries-rows { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.4rem; }
 .entry-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  align-items: center;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 0.4rem;
 }
 .entry-row input, .entry-row select {
-  width: auto;
-  flex: 1 1 100px;
-  min-width: 90px;
   padding: 0.5rem 0.6rem;
   font-size: 16px;
   min-height: 40px;
 }
-.entry-row .entry-timestamp { flex-basis: 160px; }
-.entry-row .remove-entry { flex: 0 0 auto; }
 
-.form-actions { display: flex; align-items: center; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; flex-wrap: wrap; }
+.form-actions { display: flex; align-items: center; gap: 0.5rem; justify-content: flex-end; flex-wrap: wrap; }
 .form-actions .btn { flex: 1 1 auto; min-width: 90px; }
 .form-actions .save-status {
   flex: 1 1 auto;
@@ -445,8 +465,9 @@ textarea { min-height: 3.5rem; resize: vertical; }
   min-width: 60px;
 }
 @media (max-width: 420px) {
-  .form-actions { flex-direction: column-reverse; }
-  .form-actions .btn { width: 100%; }
+  /* side by side, not stacked: a stacked pair would eat a third of a small screen now the bar is pinned */
+  .form-actions .btn { min-width: 0; }
+  .form-actions .save-status { flex-basis: 100%; order: -1; min-height: 1.1em; }
 }
 
 .toast {
@@ -848,9 +869,19 @@ textarea { min-height: 3.5rem; resize: vertical; }
 /* ---------- competition ---------- */
 .comp-toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
 .comp-toolbar .chip-row { flex: 1 1 auto; min-width: 0; }
-.comp-toolbar > .chip { display: inline-flex; align-items: center; gap: 0.35rem; }
-.comp-toolbar > .chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
-.comp-toolbar > .chip.active .badge { background: rgba(255, 255, 255, 0.25); color: #fff; }
+.comp-hidden-note {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.8rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.9rem;
+  cursor: pointer;
+}
 
 .avatar {
   display: inline-flex;
@@ -970,3 +1001,116 @@ textarea { min-height: 3.5rem; resize: vertical; }
 .cfg-boards { display: flex; flex-wrap: wrap; gap: 0.2rem 1rem; margin-left: 1.9rem; }
 .cfg-board { display: inline-flex; align-items: center; gap: 0.4rem; min-height: 34px; font-size: 0.85rem; cursor: pointer; }
 .cfg-board input, .cfg-cat .switch-label input { width: 20px; height: 20px; min-height: 0; accent-color: var(--primary); flex: 0 0 auto; }
+
+/* =====================================================================
+   Layout polish for phone + desktop
+   ===================================================================== */
+
+/* the header lines up with the page content instead of hugging the window edge */
+.topbar { padding-left: max(1rem, calc((100% - var(--page-w)) / 2 + var(--page-pad))); padding-right: max(1rem, calc((100% - var(--page-w)) / 2 + var(--page-pad))); }
+@media (max-width: 699px) {
+  .topbar { padding-left: 0; padding-right: 0; }
+}
+
+/* keyboard users get a visible focus ring (mouse/touch users don't) */
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline-offset: 0; }
+
+/* ---------- dashboard cards ---------- */
+.card-head { display: flex; align-items: center; gap: 0.55rem; min-width: 0; }
+.card .icon { font-size: 1.6rem; line-height: 1; flex: 0 0 auto; }
+.card .label { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------- history ---------- */
+.history-day {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  margin: 0.7rem 0 -0.15rem;
+}
+.history-day:first-child { margin-top: 0; }
+.history-main { min-width: 0; overflow-wrap: anywhere; }
+#history-filter { width: auto; flex: 1 1 200px; max-width: 320px; }
+/* a list of one-line rows reads badly at 1000px wide: actions end up nowhere near what they act on */
+#tab-history { max-width: 820px; }
+
+/* ---------- log / edit dialog ---------- */
+/* details replaces a wall of help text with one tappable line */
+details.field-help { margin: -0.15rem 0 0.5rem; }
+details.field-help summary { cursor: pointer; color: var(--primary); font-weight: 600; padding: 0.2rem 0; list-style: none; }
+details.field-help summary::-webkit-details-marker { display: none; }
+details.field-help[open] summary { margin-bottom: 0.2rem; }
+
+.entry-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem 0.6rem;
+  position: relative;
+  padding: 0.6rem;
+}
+.entry-cell { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.entry-cell.wide { grid-column: 1 / -1; }
+.entry-cell-label { font-size: 0.74rem; color: var(--muted); }
+.entry-row input, .entry-row select { width: 100%; flex: none; min-width: 0; }
+.entry-row .entry-cell:first-child { padding-right: 44px; } /* room for the remove button */
+.entry-row .remove-entry { position: absolute; top: 0.25rem; right: 0.25rem; }
+
+/* Save / Close stay in view however long the form is. The negative margin
+   carries the bar over the dialog's own bottom padding so it ends flush with
+   the dialog edge, with no strip of scrolling content beneath it. */
+.form-actions {
+  position: sticky;
+  /* sticky offsets are measured from the scroll container's content edge, not
+     its padding edge, so reach back over the dialog's bottom padding */
+  bottom: calc(-1.5rem - env(safe-area-inset-bottom));
+  z-index: 2;
+  margin: 1rem -1.25rem calc(-1.5rem - env(safe-area-inset-bottom));
+  padding: 0.75rem 1.25rem calc(0.75rem + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+@media (min-width: 900px) {
+  .modal { max-width: 540px; }
+}
+
+.toast { bottom: calc(1rem + env(safe-area-inset-bottom)); max-width: calc(100vw - 2rem); text-align: center; }
+
+/* ---------- settings ---------- */
+.settings-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 2rem; align-items: start; }
+.settings-col { min-width: 0; }
+.settings-col > .section-heading:first-child { margin-top: 0; }
+@media (min-width: 1000px) {
+  .settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* the baby profile: title on top, fields in a grid that adapts to the space
+   (it used to squeeze the title into a sliver beside the form whenever its
+   column was narrower than ~800px - phones and the two-column desktop layout) */
+.profile-row { flex-direction: column; align-items: stretch; }
+.profile-row .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.6rem 0.8rem; width: 100%; }
+.profile-row .row label { min-width: 0; }
+.profile-row .row input, .profile-row .row select { width: 100% !important; }
+.profile-row .row #save-profile-btn { grid-column: 1 / -1; }
+
+/* ---------- stats ---------- */
+/* charts side by side where there's room, one per row otherwise */
+#stats-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); gap: 0 1rem; align-items: start; }
+#stats-charts > * { min-width: 0; }
+#stats-charts > .muted-note { grid-column: 1 / -1; }
+
+/* ---------- small text: nothing under ~11.5px ---------- */
+.info-chip .info-lbl, .ah-date, .ov-when, .ov-pct, .ov-range, .stat-box .unit, .custom-pill { font-size: max(0.72rem, 11.5px); }
+
+/* ---------- touch screens: 44px targets, without making things bigger to the eye ---------- */
+@media (pointer: coarse) {
+  .alarm-btn, .edit-last-btn { min-width: 44px; min-height: 44px; margin: -8px -6px; }
+  .icon-btn { min-width: 44px; min-height: 44px; }
+  .ct-manage-order .icon-btn { min-width: 44px; min-height: 40px; }
+  .chip { min-height: 40px; }
+  .cfg-board { min-height: 44px; padding-right: 0.3rem; }
+  .switch-label { min-height: 44px; }
+  details.field-help summary { min-height: 44px; display: flex; align-items: center; }
+  .entry-row .remove-entry { top: 0; right: 0; }
+}

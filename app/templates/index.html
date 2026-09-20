@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Baby Monitor</title>
 <meta name="description" content="Track diaper changes, feeding, sleep, pumping and weight.">
 <meta name="theme-color" content="#6366f1">
@@ -19,11 +19,11 @@
 <header class="topbar">
   <h1>👶 Baby Monitor</h1>
   <nav class="tabs">
-    <button class="tab-btn active" data-tab="dashboard" data-i18n="Dashboard">Dashboard</button>
-    <button class="tab-btn" data-tab="history" data-i18n="History">History</button>
-    <button class="tab-btn" data-tab="stats" data-i18n="Stats">Stats</button>
-    <button class="tab-btn" data-tab="competition" data-i18n="Competition">Competition</button>
-    <button class="tab-btn" data-tab="settings" data-i18n="Settings">Settings</button>
+    <button class="tab-btn active" data-tab="dashboard"><span class="tab-ico" aria-hidden="true">🏠</span><span class="tab-label" data-i18n="Dashboard">Dashboard</span></button>
+    <button class="tab-btn" data-tab="history"><span class="tab-ico" aria-hidden="true">🕘</span><span class="tab-label" data-i18n="History">History</span></button>
+    <button class="tab-btn" data-tab="stats"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label" data-i18n="Stats">Stats</span></button>
+    <button class="tab-btn" data-tab="competition"><span class="tab-ico" aria-hidden="true">🏆</span><span class="tab-label" data-i18n="Competition">Competition</span></button>
+    <button class="tab-btn" data-tab="settings"><span class="tab-ico" aria-hidden="true">⚙️</span><span class="tab-label" data-i18n="Settings">Settings</span></button>
   </nav>
 </header>
 
@@ -69,32 +69,38 @@
   <section id="tab-competition" class="tab-panel">
     <div class="comp-toolbar">
       <div id="competition-period-chips" class="chip-row"></div>
-      <button type="button" id="competition-config-btn" class="chip"></button>
     </div>
-    <div id="competition-config" class="comp-config hidden"></div>
     <div id="competition-content"></div>
   </section>
 
   <section id="tab-settings" class="tab-panel">
-    <div class="settings-row">
-      <div><strong data-i18n="Language">Language</strong></div>
-      <select id="lang-switcher" class="lang-switcher">
-        <option value="en">EN</option>
-        <option value="uk">UK</option>
-      </select>
+    <div class="settings-grid">
+      <div class="settings-col">
+        <div class="settings-row">
+          <div><strong data-i18n="Language">Language</strong></div>
+          <select id="lang-switcher" class="lang-switcher">
+            <option value="en">EN</option>
+            <option value="uk">UK</option>
+          </select>
+        </div>
+        <div id="profile-box" class="profile-box"></div>
+        <div class="section-heading"><h2 data-i18n="People">People</h2></div>
+        <div id="people-manager" class="people-manager"></div>
+        <div class="section-heading"><h2 data-i18n="Push notifications">Push notifications</h2></div>
+        <div id="push-box" class="push-box"></div>
+      </div>
+      <div class="settings-col">
+        <div class="section-heading">
+          <h2 data-i18n="Chore types">Chore types</h2>
+          <button id="add-chore-type-btn" class="btn secondary" data-i18n="+ Add">+ Add</button>
+        </div>
+        <div id="chore-types-manager" class="chore-types-manager"></div>
+        <div class="section-heading"><h2 data-i18n="Reminders">Reminders</h2></div>
+        <div id="settings-list" class="settings-list"></div>
+        <div class="section-heading"><h2 data-i18n="Competition">Competition</h2></div>
+        <div id="competition-config" class="comp-config"></div>
+      </div>
     </div>
-    <div id="profile-box" class="profile-box"></div>
-    <div class="section-heading"><h2 data-i18n="People">People</h2></div>
-    <div id="people-manager" class="people-manager"></div>
-    <div class="section-heading">
-      <h2 data-i18n="Chore types">Chore types</h2>
-      <button id="add-chore-type-btn" class="btn secondary" data-i18n="+ Add">+ Add</button>
-    </div>
-    <div id="chore-types-manager" class="chore-types-manager"></div>
-    <div class="section-heading"><h2 data-i18n="Push notifications">Push notifications</h2></div>
-    <div id="push-box" class="push-box"></div>
-    <div class="section-heading"><h2 data-i18n="Reminders">Reminders</h2></div>
-    <div id="settings-list" class="settings-list"></div>
   </section>
 </main>
 
