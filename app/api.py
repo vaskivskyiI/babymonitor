@@ -22,6 +22,7 @@ from app.reference_ranges import (
 )
 from app.schemas import (
     ChoreTypeMetaUpdate,
+    CompetitionHiddenUpdate,
     CustomChoreTypeCreate,
     CustomChoreTypeUpdate,
     EventCreate,
@@ -751,6 +752,25 @@ def status_all(db: Session = Depends(get_db)):
 # ---------- competition (per-person stats) ----------
 
 COMPETITION_PERIODS = ("today", "7", "30", "all")
+COMPETITION_HIDDEN_KEY = "competition_hidden"
+
+
+def _competition_hidden(db: Session) -> list[str]:
+    """Board ids the household has decided not to compete in. One list for
+    everybody: what is worth competing over is a shared rule, so it must not
+    differ from phone to phone."""
+    setting = db.get(Setting, COMPETITION_HIDDEN_KEY)
+    return sorted(setting.value.get("boards", [])) if setting and setting.value else []
+
+
+@router.put("/competition/hidden")
+def update_competition_hidden(body: CompetitionHiddenUpdate, db: Session = Depends(get_db)):
+    hidden = set(_competition_hidden(db))
+    hidden.update(body.hide)
+    hidden.difference_update(body.show)
+    _set_setting(db, COMPETITION_HIDDEN_KEY, {"boards": sorted(hidden)})
+    db.commit()
+    return {"hidden": sorted(hidden)}
 
 
 @router.get("/competition")
@@ -817,6 +837,8 @@ def competition(db: Session = Depends(get_db)):
         "people": [{"id": p.id, "name": p.name, "color": p.color} for p in people],
         "today": now.astimezone(tz).date().isoformat(),
         "periods": list(COMPETITION_PERIODS),
+        # boards the household excluded from the competition (shared by all devices)
+        "hidden": _competition_hidden(db),
         "chore_types": chore_type_results,
         "scores": {
             period: {

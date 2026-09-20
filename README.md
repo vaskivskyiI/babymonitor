@@ -210,9 +210,8 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   (whatever language you typed them in). The choice persists in a cookie
   (`bm_lang`), so it survives reloads and re-visits.
 - **Settings persist in cookies**: language and the Stats period and
-  forecast selectors (`bm_stats_days`, `bm_stats_forecast`), and the
-  Competition period and hidden categories (`bm_competition_period`,
-  `bm_comp_hidden`) are remembered
+  forecast selectors (`bm_stats_days`, `bm_stats_forecast`) and the
+  Competition period (`bm_competition_period`) are remembered
   across visits via cookies rather than localStorage.
 - **Per-person tracking**: add people in Settings (e.g. "Mom"/"Dad"), and
   set which one *this device* usually logs as - every quick action and new
@@ -234,9 +233,13 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
     each person's share, for the selected period. Entries logged with no
     person are shown greyed and never take a place;
   - **Customize** (⚙): pick which categories - and which individual
-    measures within them, e.g. hide "Peed during the change" - are shown.
-    Hidden ones are also left out of the standings and points. Saved per
-    device in a cookie; anything new shows up by default.
+    measures within them, e.g. switch off "Peed during the change" - count
+    in the competition. This is a **household-wide** rule stored on the
+    server, so every device shows the same competition (what is worth
+    competing over shouldn't differ from phone to phone). Switched-off
+    categories are also left out of the standings and points; anything new
+    counts by default. Changes are merged rather than overwritten, so two
+    people editing at once don't undo each other.
   A "category" is either the number of entries for a chore type or the
   total of one of its summable numeric fields (wet/dirty diapers, ml fed,
   minutes slept, ...); point-in-time readings like weight are left out,
@@ -519,7 +522,8 @@ done in the app's Settings tab.
 - `GET/PUT/DELETE /api/events/{id}` - fetch/edit/delete a single event
 - `GET /api/status` / `GET /api/status/{key}` - last event, next due time, active session id, `open_event_id` (for start/end types like sleep), and today's totals per numeric field
 - `GET /api/stats/{key}?days=90&forecast_days=0` (or `all_time=true`) - daily aggregation for charts, zero-filled for every calendar day from birth / the first logged event. Each day has `count`, one value per numeric field, `age_days`, and the healthy range for that date as `<field>_ref_min` / `_ref_max` (plus `_ref_mid` for WHO curves); `count` covers events per day (feeds/day for `feeding`). Today is flagged `partial: true`. With `forecast_days` > 0 the list runs on into the future (`future: true`, ranges only) and `forecast` holds a projection per metric. Also: `references` (source label/url per metric), `latest` (last weight/height reading with `percentile`/`z` when the profile has a sex), `has_guidance`, and `growth_rate` for `weight`
-- `GET /api/competition` - everything the Competition tab shows, for all periods at once: `people`, `chore_types[].boards[]` (a board is a ranking: `<key>:count` or `<key>:<field>`) and `scores[period][board][person id | "unassigned"]` for `period` in `today` / `7` / `30` / `all`
+- `GET /api/competition` - everything the Competition tab shows, for all periods at once: `people`, `chore_types[].boards[]` (a board is a ranking: `<key>:count` or `<key>:<field>`) and `scores[period][board][person id | "unassigned"]` for `period` in `today` / `7` / `30` / `all`, plus `hidden` (board ids the household switched off)
+- `PUT /api/competition/hidden` `{hide?: [board ids], show?: [board ids]}` - switch boards off / on for everyone; set-based so concurrent edits merge. Returns the full `hidden` list
 - `GET /api/calculators/feeding?age_days=&weight_g=` - suggested feeding amounts/interval for an age (defaults to the profile's age and latest weight if omitted)
 
 Interactive OpenAPI docs are available at `/docs`.

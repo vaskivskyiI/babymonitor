@@ -241,10 +241,10 @@ const I18N = {
     "tie": "порівну",
     "Customize": "Налаштувати",
     "hidden": "приховано",
-    "Choose what to show": "Оберіть, що показувати",
+    "Which categories count": "Які категорії враховуються",
     "Show all": "Показати все",
-    "Saved on this device. Hidden categories are left out of the standings and points too.": "Зберігається на цьому пристрої. Приховані категорії не враховуються в таблиці й очках.",
-    "Every category is hidden - pick some under Customize.": "Усі категорії приховано - оберіть щось у «Налаштувати».",
+    "Applies to everyone, on every device. Categories switched off are left out of the standings and points too.": "Діє для всіх і на всіх пристроях. Вимкнені категорії не враховуються в таблиці й очках.",
+    "Every category is switched off - turn some on under Customize.": "Усі категорії вимкнено - увімкніть щось у «Налаштувати».",
     "Nothing logged in this period yet.": "За цей період ще нічого не записано.",
     "Nothing contested in this period yet - it takes two people logging the same thing.": "За цей період ще немає змагання - потрібно, щоб двоє людей записували те саме.",
     "3 points for 1st, 2 for 2nd and 1 for 3rd in every category where at least two people are competing. Scores count who logged each entry.": "3 очки за 1-е місце, 2 за 2-е і 1 за 3-є в кожній категорії, де змагаються щонайменше двоє. Рахується, хто зробив запис.",
@@ -385,7 +385,7 @@ const state = {
   competition: {
     data: null,
     period: getCookie("bm_competition_period") || "7",
-    hidden: new Set((getCookie("bm_comp_hidden") || "").split(",").filter(Boolean)),
+    hidden: new Set(), // board ids the household excluded - shared, from the server
     configOpen: false,
   },
   // Stats page selection; period/forecast persist in cookies. Validated in init.
@@ -1862,14 +1862,32 @@ function compStandings(data, period) {
   return rows;
 }
 
-function saveCompHidden() {
-  setCookie("bm_comp_hidden", [...state.competition.hidden].join(","));
+// Which categories count is one household-wide rule, kept on the server so
+// every device shows the same competition. The update is sent as "hide these,
+// show those" (not the whole list), so two people editing at once don't undo
+// each other; the reply is the authoritative list, incl. anyone else's edits.
+async function updateCompHidden(hide, show) {
+  const c = state.competition;
+  const before = new Set(c.hidden);
+  hide.forEach((id) => c.hidden.add(id));
+  show.forEach((id) => c.hidden.delete(id));
+  renderCompetition(); // optimistic: the UI answers instantly
+  try {
+    const res = await api("/api/competition/hidden", { method: "PUT", body: JSON.stringify({ hide, show }) });
+    c.hidden = new Set(res.hidden);
+  } catch (err) {
+    c.hidden = before;
+    toast(t("Error: ") + err.message);
+  }
+  renderCompetition();
 }
 
 async function loadCompetition() {
   const box = document.getElementById("competition-content");
   if (!state.competition.data) box.innerHTML = `<p class="muted-note">${t("Loading…")}</p>`;
-  state.competition.data = await api("/api/competition");
+  const data = await api("/api/competition");
+  state.competition.data = data;
+  state.competition.hidden = new Set(data.hidden || []);
   renderCompetition();
 }
 
@@ -1900,7 +1918,7 @@ function renderCompetition() {
     return;
   }
   if (boards.every((b) => b.hidden)) {
-    box.innerHTML = `<p class="muted-note">${t("Every category is hidden - pick some under Customize.")}</p>`;
+    box.innerHTML = `<p class="muted-note">${t("Every category is switched off - turn some on under Customize.")}</p>`;
     return;
   }
 
@@ -2058,10 +2076,10 @@ function renderCompetitionConfig() {
   const data = c.data;
   el.innerHTML = `
     <div class="comp-config-head">
-      <strong>${t("Choose what to show")}</strong>
+      <strong>${t("Which categories count")}</strong>
       <button type="button" class="btn secondary" id="comp-show-all">${t("Show all")}</button>
     </div>
-    <div class="comp-config-note">${t("Saved on this device. Hidden categories are left out of the standings and points too.")}</div>
+    <div class="comp-config-note">${t("Applies to everyone, on every device. Categories switched off are left out of the standings and points too.")}</div>
     ${data.chore_types
       .map((ct) => {
         const hiddenN = ct.boards.filter((b) => c.hidden.has(b.id)).length;
@@ -2082,24 +2100,18 @@ function renderCompetitionConfig() {
     const hiddenN = ct.boards.filter((b) => c.hidden.has(b.id)).length;
     box.indeterminate = hiddenN > 0 && hiddenN < ct.boards.length; // some, not all, boards shown
     box.addEventListener("change", () => {
-      ct.boards.forEach((b) => (box.checked ? c.hidden.delete(b.id) : c.hidden.add(b.id)));
-      saveCompHidden();
-      renderCompetition();
+      const ids = ct.boards.map((b) => b.id);
+      if (box.checked) updateCompHidden([], ids);
+      else updateCompHidden(ids, []);
     });
   });
   el.querySelectorAll("[data-board]").forEach((box) => {
     box.addEventListener("change", () => {
-      if (box.checked) c.hidden.delete(box.dataset.board);
-      else c.hidden.add(box.dataset.board);
-      saveCompHidden();
-      renderCompetition();
+      if (box.checked) updateCompHidden([], [box.dataset.board]);
+      else updateCompHidden([box.dataset.board], []);
     });
   });
-  el.querySelector("#comp-show-all").addEventListener("click", () => {
-    c.hidden.clear();
-    saveCompHidden();
-    renderCompetition();
-  });
+  el.querySelector("#comp-show-all").addEventListener("click", () => updateCompHidden([], [...c.hidden]));
 }
 
 // ---------- stats: overview + detail ----------
@@ -3402,6 +3414,7 @@ if (!STATS_PERIODS.some((c) => c.v === state.stats.days)) state.stats.days = "90
 if (!STATS_FORECASTS.some((c) => c.v === state.stats.forecast)) state.stats.forecast = "0";
 
 if (!COMP_PERIODS.some((p) => p.v === state.competition.period)) state.competition.period = "7";
+setCookie("bm_comp_hidden", "", -1); // superseded by the shared, server-side list
 document.getElementById("competition-config-btn").addEventListener("click", () => {
   state.competition.configOpen = !state.competition.configOpen;
   if (state.competition.data) renderCompetition();

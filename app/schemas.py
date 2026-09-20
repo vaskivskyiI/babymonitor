@@ -86,6 +86,15 @@ class StatusOut(BaseModel):
     today: dict[str, float] = {}
 
 
+class CompetitionHiddenUpdate(BaseModel):
+    """Change which competition boards are hidden, for everyone. Set-based
+    (hide these, show those) instead of "replace the list", so two people
+    editing from different phones can't overwrite each other's changes."""
+
+    hide: list[str] = []
+    show: list[str] = []
+
+
 class PushKeys(BaseModel):
     p256dh: str
     auth: str
