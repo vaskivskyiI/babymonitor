@@ -75,6 +75,10 @@ const I18N = {
     "Events": "Подій",
     "Add people in Settings to compare stats.": "Додайте людей у Налаштуваннях, щоб порівнювати статистику.",
     "Edit exact time": "Змінити точний час",
+    "Bath": "Купання",
+    "With soap": "З милом",
+    "🧼 Bath with soap": "🧼 Купання з милом",
+    "🛁 Bath": "🛁 Купання",
     // chore type labels
     "Diaper Change": "Зміна підгузка",
     "Feeding": "Годування",

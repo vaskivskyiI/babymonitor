@@ -193,6 +193,7 @@ def load_builtin_types() -> None:
         diaper,
         feeding,
         height,
+        bath,
         probiotic,
         pumping,
         sleep,

@@ -38,6 +38,7 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   day and 75 min on the second) - everything else (diaper, feeding,
   ...) is simply attributed to the day it started, since those are
   discrete events rather than spans.
+- **Bath**: one-tap "🛁 Bath" or "🧼 Bath with soap" on the dashboard (or the form, with a "With soap" checkbox); counts toward Competition like any other chore.
 - **Weight** and **Height**: quick weigh-in / measurement log.
 - **Pumping**: also a checkpoint-based log, one sub-step per side/session
   (amount + duration each), so a left-then-right pump adds up correctly.
@@ -202,7 +203,7 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   The frontend renders forms and charts generically from each type's
   field definitions - adding a new chore type requires no frontend
   changes. Built-in types: `diaper`, `feeding`, `sleep`, `pumping`,
-  `weight`, `height`, `probiotic`.
+  `weight`, `height`, `probiotic`, `bath`.
 - **Autosave**: the log/edit modal saves on every field change (blur for
   text/number/date, immediately for checkboxes/selects, and on add/remove
   for checkpoint rows) - creating the event on the first change and
