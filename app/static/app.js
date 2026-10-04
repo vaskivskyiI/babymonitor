@@ -170,6 +170,7 @@ const I18N = {
     "Reminder time updated": "Час нагадування змінено",
     "Reminder reset to default": "Нагадування скинуто до стандартного",
     "Remind me in": "Нагадати через",
+    "Next one after the last event": "Наступний через (від останньої події)",
     "Or at a specific time": "Або в конкретний час",
     "Set time": "Встановити",
     "Reset to default": "Скинути до стандартного",
@@ -774,7 +775,7 @@ function openDueModal(s) {
   body.innerHTML = `
     ${current ? `<div class="due-current">${current}</div>` : ""}
     <div class="field">
-      <label>${t("Remind me in")}</label>
+      <label>${t(s.last_event ? "Next one after the last event" : "Remind me in")}</label>
       <div class="preset-row">
         ${presets.map((m) => `<button type="button" class="btn secondary" data-min="${m}">${presetLabel(m)}</button>`).join("")}
       </div>
@@ -791,7 +792,12 @@ function openDueModal(s) {
   const timeInput = body.querySelector("#due-time");
   if (s.next_due) timeInput.value = fmtClockTime24(new Date(s.next_due));
   body.querySelectorAll("[data-min]").forEach((btn) =>
-    btn.addEventListener("click", () => setNextDue(s.chore_type, new Date(Date.now() + Number(btn.dataset.min) * 60000)))
+    btn.addEventListener("click", () => {
+      // relative to the last logged event, not to "now"; only without any
+      // event on record does "now" make sense as the starting point
+      const base = s.last_event ? new Date(s.last_event.timestamp).getTime() : Date.now();
+      setNextDue(s.chore_type, new Date(base + Number(btn.dataset.min) * 60000));
+    })
   );
   body.querySelector("#due-time-set").addEventListener("click", () => {
     if (!timeInput.value) return;
@@ -805,6 +811,20 @@ function openDueModal(s) {
   if (reset) reset.addEventListener("click", () => setNextDue(s.chore_type, null));
   document.getElementById("due-modal-backdrop").classList.remove("hidden");
 }
+
+// Date/time inputs: open the native calendar / clock picker on a click or tap
+// anywhere in the field (browsers by default only open it from the tiny
+// indicator icon, so on many devices tapping the field seemed to do nothing).
+document.addEventListener("click", (e) => {
+  const el = e.target;
+  if (!(el instanceof HTMLInputElement) || !["date", "time", "datetime-local"].includes(el.type)) return;
+  if (el.readOnly || el.disabled || typeof el.showPicker !== "function") return;
+  try {
+    el.showPicker();
+  } catch (err) {
+    /* picker already open / not allowed - the field stays editable by keyboard */
+  }
+});
 
 // "HH:MM" in 24h, as <input type="time"> requires (fmtClockTime is locale-formatted)
 function fmtClockTime24(d) {

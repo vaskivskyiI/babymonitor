@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --page-w: 720px;
   --page-pad: 1rem;
   --bg: #f6f6f9;
@@ -21,6 +22,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark; /* native date/time pickers and their icons follow the theme */
     --bg: #101014;
     --surface: #1a1a21;
     --surface-2: #1f1f28;
@@ -189,6 +191,7 @@ main { max-width: var(--page-w); margin: 0 auto; padding: 1.1rem var(--page-pad)
 .card .due.overdue { color: var(--danger); }
 .card .due.ok { color: var(--ok); }
 .alarm-btn {
+  color: var(--text); /* the ⏱ glyph is monochrome text: default button colour is black */
   background: none;
   border: none;
   font-size: 1rem;
