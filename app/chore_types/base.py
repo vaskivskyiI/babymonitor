@@ -93,6 +93,9 @@ class ChoreType:
     # not 24h after the last dose) - the frontend shows "Tomorrow" instead
     # of a countdown when satisfied, and an overdue-by-24h reference when not
     daily_reminder: bool = False
+    # boolean fields for which the dashboard shows "time since last true"
+    # (e.g. diaper: last pee / last poop)
+    last_true_fields: list[str] = []
 
     # "Session" support: lets a chore type keep appending timestamped
     # checkpoints (via an "entries" field) to the same event instead of
@@ -180,6 +183,7 @@ class ChoreType:
             "interval_configurable": self.interval_configurable,
             "fixed_reminder_note": self.fixed_reminder_note,
             "daily_reminder": self.daily_reminder,
+            "last_true_fields": self.last_true_fields,
             "session_window_configurable": self.session_window_configurable,
             "session_window_minutes": session_window_minutes,
             "has_start_end": self.has_start_end,

@@ -677,6 +677,13 @@ async function loadDashboard() {
       buttonsHtml = `<button class="quick-btn" data-action="new">${t("+ Log now")}</button>`;
     }
 
+    let sinceHtml = "";
+    if (s.last_true && Object.keys(s.last_true).length) {
+      const icons = { pee: "💧", poop: "💩" };
+      sinceHtml = `<div class="since-row">${Object.entries(s.last_true)
+        .map(([f, ts]) => `<span>${icons[f] || t(f)} ${fmtRelative(ts)}</span>`)
+        .join("")}</div>`;
+    }
     let todayHtml = "";
     if (ct) {
       const parts = ct.fields
@@ -688,6 +695,7 @@ async function loadDashboard() {
       <div class="card-head"><div class="icon">${s.icon}</div><div class="label">${t(s.label)}</div></div>
       ${lastHtml}
       ${dueHtml}
+      ${sinceHtml}
       ${todayHtml}
       ${buttonsHtml}
     `;

@@ -679,6 +679,22 @@ def _today_bounds(tz: ZoneInfo) -> tuple[datetime, datetime]:
     return start, end
 
 
+def _last_true(ct, db: Session) -> dict:
+    if not ct.last_true_fields:
+        return {}
+    remaining = set(ct.last_true_fields)
+    found: dict = {}
+    stmt = select(Event).where(Event.chore_type == ct.key).order_by(Event.timestamp.desc()).limit(500)
+    for e in db.execute(stmt).scalars():
+        for f in list(remaining):
+            if e.data.get(f):
+                found[f] = as_utc(e.timestamp)
+                remaining.discard(f)
+        if not remaining:
+            break
+    return found
+
+
 def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
     last = _last_event(db, ct.key)
     interval = _interval_minutes(db, ct)
@@ -740,6 +756,7 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
         active_session_event_id=active_session_event_id,
         open_event_id=open_event_id,
         today=today,
+        last_true=_last_true(ct, db),
     )
 
 

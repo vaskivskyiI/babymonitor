@@ -84,6 +84,8 @@ class StatusOut(BaseModel):
     active_session_event_id: Optional[int] = None
     open_event_id: Optional[int] = None
     today: dict[str, float] = {}
+    # boolean field name -> ISO time it was last true (see ChoreType.last_true_fields)
+    last_true: dict[str, datetime] = {}
 
 
 class CompetitionHiddenUpdate(BaseModel):

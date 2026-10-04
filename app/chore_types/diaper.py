@@ -7,6 +7,7 @@ class DiaperChoreType(ChoreType):
     label = "Diaper Change"
     icon = "🧷"
     default_interval_minutes = 180
+    last_true_fields = ["pee", "poop"]
 
     fields = [
         FieldDef(name="pee", label="Pee", type="boolean", numeric_stat=True),
