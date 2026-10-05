@@ -9,8 +9,7 @@ on:
     paths:
       - "custom_components/**"
       - "hacs.json"
-  schedule:
-    - cron: "0 0 * * *"
+
 
 jobs:
   validate:
