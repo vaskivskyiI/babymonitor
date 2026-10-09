@@ -39,6 +39,9 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
   ...) is simply attributed to the day it started, since those are
   discrete events rather than spans.
 - **Bath**: one-tap "🛁 Bath" or "🧼 Bath with soap" on the dashboard (or the form, with a "With soap" checkbox); counts toward Competition like any other chore.
+- **Water**: log how much water the baby was given (ml), with one-tap 10/30/50/100 ml buttons; totals show up on the dashboard and in Competition.
+- **Time since last pee / poop** on the diaper card counts a pee or poop *during the change* the same as a regular one.
+- **Competition** also has a "Per person and total" table: every stat (diapers changed, wet-or-dirty diapers, pee / poop incl. during the change, feedings, ml, ...) per person plus the household total, for the selected period.
 - **Weight** and **Height**: quick weigh-in / measurement log.
 - **Pumping**: also a checkpoint-based log, one sub-step per side/session
   (amount + duration each), so a left-then-right pump adds up correctly.

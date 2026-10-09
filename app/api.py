@@ -680,16 +680,16 @@ def _today_bounds(tz: ZoneInfo) -> tuple[datetime, datetime]:
 
 
 def _last_true(ct, db: Session) -> dict:
-    if not ct.last_true_fields:
+    if not ct.last_true_groups:
         return {}
-    remaining = set(ct.last_true_fields)
+    remaining = set(ct.last_true_groups)
     found: dict = {}
     stmt = select(Event).where(Event.chore_type == ct.key).order_by(Event.timestamp.desc()).limit(500)
     for e in db.execute(stmt).scalars():
-        for f in list(remaining):
-            if e.data.get(f):
-                found[f] = as_utc(e.timestamp)
-                remaining.discard(f)
+        for group in list(remaining):
+            if any(e.data.get(f) for f in ct.last_true_groups[group]):
+                found[group] = as_utc(e.timestamp)
+                remaining.discard(group)
         if not remaining:
             break
     return found
@@ -827,6 +827,9 @@ def competition(db: Session = Depends(get_db)):
         boards = [{"id": f"{ct.key}:count", "metric": "count", "label": "Events", "unit": "", "display": None}] + [
             {"id": f"{ct.key}:{f.name}", "metric": f.name, "label": f.label, "unit": f.unit or "", "display": f.display}
             for f in fields
+        ] + [
+            {"id": f"{ct.key}:{d['name']}", "metric": d["name"], "label": d["label"], "unit": "", "display": None}
+            for d in ct.derived_counts
         ]
         for period in COMPETITION_PERIODS:
             for b in boards:
@@ -841,6 +844,9 @@ def competition(db: Session = Depends(get_db)):
                     continue
                 board_scores = scores[period]
                 board_scores[f"{ct.key}:count"][bucket] += 1
+                for d in ct.derived_counts:
+                    if any(e.data.get(f) for f in d["any_of"]):
+                        board_scores[f"{ct.key}:{d['name']}"][bucket] += 1
                 for f in fields:
                     val = e.data.get(f.name)
                     # bool is a subclass of int in Python, so True/False already

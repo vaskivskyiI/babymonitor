@@ -241,6 +241,11 @@ const I18N = {
     "Standings": "Турнірна таблиця",
     "Who leads what": "Хто в чому лідирує",
     "By category": "За категоріями",
+    "Per person and total": "По людях і разом",
+    "Total": "Разом",
+    "Water": "Вода",
+    "🚰 Water": "🚰 Вода",
+    "Wet or dirty diapers": "Підгузки з пісею чи какою",
     "Overall": "Загалом",
     "pts": "очок",
     "entries": "записів",
@@ -1994,7 +1999,7 @@ function renderCompetition() {
   if (boards.every((b) => b.hidden)) {
     box.innerHTML = `${note}<p class="muted-note">${t("Every category is switched off - turn some on in Settings → Competition.")}</p>`;
   } else {
-    box.innerHTML = note + standingsHtml(data, c.period) + leadersTableHtml(data, c.period) + categoryCardsHtml(data, c.period);
+    box.innerHTML = note + standingsHtml(data, c.period) + leadersTableHtml(data, c.period) + totalsTableHtml(data, c.period) + categoryCardsHtml(data, c.period);
   }
   const noteBtn = box.querySelector("#comp-hidden-note");
   if (noteBtn) {
@@ -2099,6 +2104,38 @@ function leadersTableHtml(data, period) {
   return `<section class="comp-section">
       <h2>👑 ${t("Who leads what")}</h2>
       <div class="leaders-wrap"><table class="leaders-table"><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table></div>
+    </section>`;
+}
+
+// ----- per person + total -----
+
+// Rows = every shown stat, columns = each person (and "Unassigned" if any
+// entry has no person) plus the household total, for the selected period.
+function totalsTableHtml(data, period) {
+  const buckets = data.people.map((p) => String(p.id));
+  const hasUnassigned = compBoards(data).some(
+    (b) => !b.hidden && ((data.scores[period] || {})[b.id] || {}).unassigned
+  );
+  if (hasUnassigned) buckets.push("unassigned");
+  const head = buckets.map((b) => `<th>${avatarHtml(compBucket(data, b))} ${esc(compBucket(data, b).name)}</th>`).join("");
+  let body = "";
+  data.chore_types.forEach((ct) => {
+    const rows = ct.boards
+      .filter((b) => !state.competition.hidden.has(b.id))
+      .map((b) => {
+        const by = (data.scores[period] || {})[b.id] || {};
+        const total = Object.values(by).reduce((s, v) => s + v, 0);
+        if (!total) return "";
+        const cells = buckets.map((k) => `<td>${by[k] ? fmtBoardValue(b, by[k]) : "–"}</td>`).join("");
+        return `<tr><th class="metric">${t(b.label)}${b.unit && b.display !== "duration" ? ` <span class="muted">(${esc(b.unit)})</span>` : ""}</th>${cells}<td class="total"><b>${fmtBoardValue(b, total)}</b></td></tr>`;
+      })
+      .join("");
+    if (rows) body += `<tr class="cat"><th colspan="${buckets.length + 2}">${ct.icon} ${t(ct.label)}</th></tr>${rows}`;
+  });
+  if (!body) return "";
+  return `<section class="comp-section">
+      <h2>🧮 ${t("Per person and total")} <small>${compPeriodTitle(period)}</small></h2>
+      <div class="leaders-wrap"><table class="leaders-table totals-table"><thead><tr><th></th>${head}<th>${t("Total")}</th></tr></thead><tbody>${body}</tbody></table></div>
     </section>`;
 }
 

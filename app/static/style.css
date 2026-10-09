@@ -1130,3 +1130,7 @@ details.field-help[open] summary { margin-bottom: 0.2rem; }
 .qa-add-form button { flex: 1 1 100%; }
 
 .since-row { display: flex; gap: 0.8rem; flex-wrap: wrap; font-size: 0.8rem; color: var(--muted); margin: 0.2rem 0; }
+
+.totals-table td { text-align: right; white-space: nowrap; }
+.totals-table td.total { background: var(--surface-2); }
+.totals-table thead th .avatar { vertical-align: middle; margin-right: 0.25rem; }
