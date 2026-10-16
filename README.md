@@ -42,6 +42,7 @@ server, with a mobile-friendly web UI and a JSON API for Home Assistant.
 - **Water**: log how much water the baby was given (ml), with one-tap 10/30/50/100 ml buttons; totals show up on the dashboard and in Competition.
 - **Time since last pee / poop** on the diaper card counts a pee or poop *during the change* the same as a regular one.
 - **Competition** also has a "Per person and total" table: every stat (diapers changed, wet-or-dirty diapers, pee / poop incl. during the change, feedings, ml, ...) per person plus the household total, for the selected period.
+- **Feeding follow-up questions**: 15 min after a feeding was logged with no amount, a popup asks how much (30-150 ml or custom); if skipped it asks again when the next feeding is started. Starting a new feeding also asks whether the probiotic was given if it has been more than 24 h, and, between 20:00 and 24:00, whether the baby had a bath if none is logged today ("no" is not repeated for 3 h).
 - **Weight** and **Height**: quick weigh-in / measurement log.
 - **Pumping**: also a checkpoint-based log, one sub-step per side/session
   (amount + duration each), so a left-then-right pump adds up correctly.

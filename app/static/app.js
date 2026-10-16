@@ -243,6 +243,18 @@ const I18N = {
     "By category": "За категоріями",
     "Per person and total": "По людях і разом",
     "Total": "Разом",
+    "How much did the baby eat?": "Скільки з'їла дитина?",
+    "Enter other amount": "Інша кількість",
+    "Skip": "Пропустити",
+    "Amount (ml)": "Кількість (мл)",
+    "It's been more than 24 hours since the last probiotic. Was it given?": "Минуло понад 24 години від останнього пробіотика. Його давали?",
+    "Yes, given now": "Так, дали зараз",
+    "No": "Ні",
+    "Probiotic logged": "Пробіотик записано",
+    "No bath logged today. Did the baby have a bath?": "Сьогодні купання не записано. Малюка купали?",
+    "Yes, with soap": "Так, з милом",
+    "Yes, without soap": "Так, без мила",
+    "Bath logged": "Купання записано",
     "Water": "Вода",
     "🚰 Water": "🚰 Вода",
     "Wet or dirty diapers": "Підгузки з пісею чи какою",
@@ -742,6 +754,7 @@ async function loadDashboard() {
     }
     container.appendChild(card);
   });
+  maybePromptMissingAmount(statuses);
 }
 
 // ---------- change next reminder time ----------
@@ -841,6 +854,186 @@ document.getElementById("due-modal-backdrop").addEventListener("click", (e) => {
   if (e.target.id === "due-modal-backdrop") closeDueModal();
 });
 
+// ---------- follow-up questions around feeding ----------
+
+// Generic question dialog: resolves with the clicked button's value, or null
+// when dismissed (X / click outside). buttons: [{label, value, primary?}]
+function askModal(title, text, buttons) {
+  return new Promise((resolve) => {
+    const backdrop = document.getElementById("ask-modal-backdrop");
+    document.getElementById("ask-modal-title").textContent = title;
+    const body = document.getElementById("ask-modal-body");
+    body.innerHTML = `${text ? `<p class="ask-text">${text}</p>` : ""}
+      <div class="ask-buttons">${buttons
+        .map((b, i) => `<button type="button" class="btn ${b.primary ? "" : "secondary"}" data-i="${i}">${b.label}</button>`)
+        .join("")}</div>`;
+    const done = (v) => {
+      backdrop.classList.add("hidden");
+      backdrop.onclick = null;
+      document.getElementById("ask-modal-close").onclick = null;
+      resolve(v);
+    };
+    body.querySelectorAll("[data-i]").forEach((el) => el.addEventListener("click", () => done(buttons[el.dataset.i].value)));
+    document.getElementById("ask-modal-close").onclick = () => done(null);
+    backdrop.onclick = (e) => {
+      if (e.target === backdrop) done(null);
+    };
+    backdrop.classList.remove("hidden");
+  });
+}
+
+const AMOUNT_PROMPT_AFTER_MIN = 15;
+const askedRecently = {}; // question key -> time it was answered "no" / dismissed
+const amountDismissed = new Set(); // feeding event ids whose auto-popup was dismissed
+
+// A feeding "has an amount" once any breast/formula total exists.
+function feedingMissingAmount(status) {
+  const ev = status && status.last_event;
+  if (!ev) return null;
+  const d = ev.data || {};
+  if (d.total_amount_ml != null || d.total_breast_amount_ml != null || d.total_formula_amount_ml != null) return null;
+  return ev;
+}
+
+async function promptFeedAmount(ev) {
+  const presets = [30, 60, 90, 120, 150];
+  const entries = (ev.data.entries || []).filter((e) => e);
+  const methodName = {
+    breast: "Breast", breast_left: "Breast (left)", breast_right: "Breast (right)", pumped: "Pumped milk (bottle)", formula: "Formula",
+  };
+  const last = entries[entries.length - 1];
+  const what = last && methodName[last.method] ? ` (${t(methodName[last.method])})` : "";
+  const choice = await askModal(
+    t("How much did the baby eat?"),
+    `${tSummary(ev.summary)}${what} · ${fmtRelative(ev.timestamp)}`,
+    [
+      ...presets.map((m) => ({ label: `${m} ml`, value: m })),
+      { label: t("Enter other amount"), value: "other" },
+      { label: t("Skip"), value: null },
+    ]
+  );
+  let amount = choice;
+  if (choice === "other") {
+    const typed = prompt(t("Amount (ml)"));
+    amount = typed ? Number(typed) : null;
+  }
+  if (!amount || Number.isNaN(amount)) {
+    amountDismissed.add(ev.id);
+    return false;
+  }
+  // put the amount on the newest checkpoint that has none yet
+  const fresh = await api(`/api/events/${ev.id}`);
+  const list = [...(fresh.data.entries || [])];
+  let idx = -1;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].amount_ml == null && list[i].weight_after_g == null) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx < 0) idx = list.length - 1;
+  if (idx >= 0) list[idx] = { ...list[idx], amount_ml: amount };
+  await api(`/api/events/${ev.id}`, { method: "PUT", body: JSON.stringify({ data: { ...fresh.data, entries: list } }) });
+  toast(t("Saved"));
+  return true;
+}
+
+// Time-based nudge from the dashboard refresh: 15 min after a feeding was
+// logged without any amount, ask once (until dismissed).
+let askBusy = false;
+async function maybePromptMissingAmount(statuses) {
+  if (askBusy || !document.getElementById("modal-backdrop").classList.contains("hidden")) return;
+  const s = statuses.find((x) => x.chore_type === "feeding");
+  const ev = feedingMissingAmount(s);
+  if (!ev || amountDismissed.has(ev.id)) return;
+  const stamps = [ev.timestamp, ...(ev.data.entries || []).map((e) => e.timestamp)].map((x) => new Date(x).getTime()).filter(Boolean);
+  if (Date.now() - Math.max(...stamps) < AMOUNT_PROMPT_AFTER_MIN * 60000) return;
+  askBusy = true;
+  try {
+    if (await promptFeedAmount(ev)) refreshCurrentView();
+  } finally {
+    askBusy = false;
+  }
+}
+
+function localDay(d) {
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+// Runs before a NEW feeding is recorded: missing amount on the previous one,
+// probiotic overdue (>24h), evening bath not yet logged. "No"/dismiss is
+// remembered for a few hours so it doesn't nag on every feed.
+async function preFeedChecks() {
+  let statuses;
+  try {
+    statuses = await api("/api/status");
+  } catch (err) {
+    return;
+  }
+  const by = (k) => statuses.find((x) => x.chore_type === k);
+  const recentlyAsked = (k, hours) => askedRecently[k] && Date.now() - askedRecently[k] < hours * 3600000;
+
+  askBusy = true;
+  try {
+    const prev = feedingMissingAmount(by("feeding"));
+    if (prev && (await promptFeedAmount(prev))) refreshCurrentView();
+
+    const pro = by("probiotic");
+    if (pro && pro.last_event && !recentlyAsked("probiotic", 3)) {
+      const hours = (Date.now() - new Date(pro.last_event.timestamp).getTime()) / 3600000;
+      if (hours > 24) {
+        const ans = await askModal(
+          t("Probiotic"),
+          t("It's been more than 24 hours since the last probiotic. Was it given?"),
+          [
+            { label: t("Yes, given now"), value: true, primary: true },
+            { label: t("No"), value: false },
+          ]
+        );
+        if (ans) {
+          await api("/api/events", {
+            method: "POST",
+            body: JSON.stringify({ chore_type: "probiotic", data: {}, person_id: currentPersonId() }),
+          });
+          toast(t("Probiotic logged"));
+          refreshCurrentView();
+        } else {
+          askedRecently.probiotic = Date.now();
+        }
+      }
+    }
+
+    const bath = by("bath");
+    const now = new Date();
+    if (bath && now.getHours() >= 20 && !recentlyAsked("bath", 3)) {
+      const bathedToday = bath.last_event && localDay(new Date(bath.last_event.timestamp)) === localDay(now);
+      if (!bathedToday) {
+        const ans = await askModal(
+          t("Bath"),
+          t("No bath logged today. Did the baby have a bath?"),
+          [
+            { label: t("Yes, with soap"), value: "soap", primary: true },
+            { label: t("Yes, without soap"), value: "plain" },
+            { label: t("No"), value: false },
+          ]
+        );
+        if (ans) {
+          await api("/api/events", {
+            method: "POST",
+            body: JSON.stringify({ chore_type: "bath", data: { soap: ans === "soap" }, person_id: currentPersonId() }),
+          });
+          toast(t("Bath logged"));
+          refreshCurrentView();
+        } else {
+          askedRecently.bath = Date.now();
+        }
+      }
+    }
+  } finally {
+    askBusy = false;
+  }
+}
+
 async function handleCardAction(choreTypeKey, action, targetEventId) {
   if (action === "quick-start") {
     await quickStart(choreTypeKey);
@@ -858,9 +1051,11 @@ async function handleCardAction(choreTypeKey, action, targetEventId) {
       const event = await api(`/api/events/${targetEventId}`);
       openForm(choreTypeKey, "checkpoint", event);
     } else {
+      if (choreTypeKey === "feeding") await preFeedChecks();
       openForm(choreTypeKey, "create");
     }
   } else {
+    if (choreTypeKey === "feeding" && action !== "start") await preFeedChecks();
     openForm(choreTypeKey, "create");
   }
 }
@@ -930,6 +1125,7 @@ async function quickEnd(eventId) {
 async function runFieldQuickAction(choreTypeKey, qa, status) {
   try {
     const sessionEventId = status.active_session_event_id || status.open_event_id;
+    if (!sessionEventId && choreTypeKey === "feeding") await preFeedChecks();
     const event = sessionEventId ? await api(`/api/events/${sessionEventId}`) : null;
     const entries = event ? [...(event.data[qa.entries_field] || [])] : [];
     if (qa.mode === "log") {
@@ -2295,9 +2491,11 @@ function metricSummary(data, name, meta) {
   const done = days.filter((d) => !d.future && !d.partial);
   const firstIdx = done.findIndex((d) => d.count > 0);
   const seen = firstIdx < 0 ? [] : done.slice(firstIdx);
-  const valued = seen.filter((d) => (name === "count" ? true : d[name] != null));
-  if (!valued.length) return null;
-  const value = (d) => (name === "count" ? d.count : d[name]);
+  // quiet days count as 0 - skipping them would make "last 7 days" reach back
+  // to old data when nothing was logged recently
+  const valued = seen;
+  if (!valued.length || !seen.some((d) => name === "count" || d[name] != null)) return null;
+  const value = (d) => (name === "count" ? d.count : d[name] ?? 0);
 
   const recent = valued.slice(-7);
   const avg = recent.reduce((s, d) => s + value(d), 0) / recent.length;
