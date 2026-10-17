@@ -277,7 +277,7 @@ const I18N = {
     "Nothing logged in this period yet.": "За цей період ще нічого не записано.",
     "Nothing contested in this period yet - it takes two people logging the same thing.": "За цей період ще немає змагання - потрібно, щоб двоє людей записували те саме.",
     "3 points for 1st, 2 for 2nd and 1 for 3rd in every category where at least two people are competing. Scores count who logged each entry.": "3 очки за 1-е місце, 2 за 2-е і 1 за 3-є в кожній категорії, де змагаються щонайменше двоє. Рахується, хто зробив запис.",
-    "Points are multiplied by each category's difficulty (set in the list below, e.g. ×2 for a dirty diaper).": "Бали множаться на складність категорії (задається в списку нижче, напр. ×2 за брудний підгузок).",
+    "Points are won day by day and added up over the period, and multiplied by each category's difficulty (set in the list below, e.g. ×2 for a dirty diaper).": "Бали здобуваються по днях і додаються за період, а також множаться на складність категорії (задається в списку нижче, напр. ×2 за брудний підгузок).",
     "Difficulty (points multiplier)": "Складність (множник балів)",
     // push: lead time, delivery diagnostics
     "Notify": "Сповіщати за",
@@ -2198,15 +2198,44 @@ function rankBoard(data, boardId, period) {
 
 // Points table over the visible boards: 3 / 2 / 1 for 1st / 2nd / 3rd on
 // every contested board.
+// Ranks one set of {bucket: value} like rankBoard, but straight from values.
+function rankValues(data, by) {
+  const entries = Object.entries(by).map(([bucket, value]) => ({ bucket, value, ...compBucket(data, bucket) }));
+  const people = entries.filter((e) => e.person).sort((a, b) => b.value - a.value);
+  let rank = 0;
+  let prev = null;
+  people.forEach((e, i) => {
+    if (e.value !== prev) {
+      rank = i + 1;
+      prev = e.value;
+    }
+    e.rank = rank;
+  });
+  return { people, contested: people.length >= 2 };
+}
+
+// Calendar days (YYYY-MM-DD) that belong to a period, newest = today.
+function compPeriodDays(data, period) {
+  const days = Object.keys(data.daily || {});
+  if (period === "all") return days;
+  const n = period === "today" ? 1 : Number(period);
+  const [y, m, d] = data.today.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 1, d - (n - 1))).toISOString().slice(0, 10);
+  return days.filter((x) => x >= first && x <= data.today);
+}
+
 function compStandings(data, period) {
   const table = {};
   data.people.forEach((p) => {
     table[p.id] = { id: p.id, ...compBucket(data, p.id), points: 0, medals: [0, 0, 0], led: 0 };
   });
-  compBoards(data)
-    .filter((b) => !b.hidden)
-    .forEach((b) => {
-      const r = rankBoard(data, b.id, period);
+  // every day is a round: placings are decided per day and the points are
+  // added up over the window - so widening the window never loses points
+  const boards = compBoards(data).filter((b) => !b.hidden);
+  compPeriodDays(data, period).forEach((day) => {
+    const dayScores = data.daily[day] || {};
+    boards.forEach((b) => {
+      const r = rankValues(data, dayScores[b.id] || {});
       if (!r.contested) return;
       r.people.forEach((e) => {
         const row = table[e.bucket];
@@ -2216,6 +2245,7 @@ function compStandings(data, period) {
         if (e.rank === 1) row.led += 1;
       });
     });
+  });
   Object.values(table).forEach((row) => (row.points = Math.round(row.points * 10) / 10));
   const rows = Object.values(table).sort(
     (a, b) => b.points - a.points || b.medals[0] - a.medals[0] || b.medals[1] - a.medals[1] || a.name.localeCompare(b.name)
@@ -2366,7 +2396,7 @@ function standingsHtml(data, period) {
       <h2>🏆 ${t("Standings")} <small>${compPeriodTitle(period)}</small></h2>
       ${contested ? podium : `<p class="muted-note">${t("Nothing contested in this period yet - it takes two people logging the same thing.")}</p>`}
       <div class="standings">${list}</div>
-      <div class="comp-note">${t("3 points for 1st, 2 for 2nd and 1 for 3rd in every category where at least two people are competing. Scores count who logged each entry.")} ${t("Points are multiplied by each category's difficulty (set in the list below, e.g. ×2 for a dirty diaper).")}</div>
+      <div class="comp-note">${t("3 points for 1st, 2 for 2nd and 1 for 3rd in every category where at least two people are competing. Scores count who logged each entry.")} ${t("Points are won day by day and added up over the period, and multiplied by each category's difficulty (set in the list below, e.g. ×2 for a dirty diaper).")}</div>
     </section>`;
 }
 

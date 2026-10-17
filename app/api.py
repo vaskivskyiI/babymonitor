@@ -960,6 +960,10 @@ def competition(db: Session = Depends(get_db)):
 
     chore_type_results = []
     weight_overrides = _competition_weight_overrides(db)
+    # per local day: board -> bucket -> value. Points are earned per day (each
+    # day is one round) and summed over the window, so a wider window can
+    # only ever add points - see compStandings() in app.js.
+    daily: dict[str, dict[str, dict[str, float]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
     scores: dict[str, dict[str, dict[str, float]]] = {p: {} for p in COMPETITION_PERIODS}
     for ct in _effective_chore_types(db, enabled_only=True):
         events = db.execute(select(Event).where(Event.chore_type == ct.key)).scalars().all()
@@ -989,6 +993,15 @@ def competition(db: Session = Depends(get_db)):
         for e in events:
             ts = as_utc(e.timestamp)
             bucket = str(e.person_id) if e.person_id is not None else "unassigned"
+            day_scores = daily[ts.astimezone(tz).date().isoformat()]
+            day_scores[f"{ct.key}:count"][bucket] += 1
+            for d in ct.derived_counts:
+                if _derived_hit(d, e.data):
+                    day_scores[f"{ct.key}:{d['name']}"][bucket] += 1
+            for f in fields:
+                val = e.data.get(f.name)
+                if isinstance(val, (int, float)):
+                    day_scores[f"{ct.key}:{f.name}"][bucket] += val
             for period in COMPETITION_PERIODS:
                 lower = since[period]
                 if lower is not None and ts < lower:
@@ -1014,6 +1027,10 @@ def competition(db: Session = Depends(get_db)):
         # boards the household excluded from the competition (shared by all devices)
         "hidden": _competition_hidden(db),
         "chore_types": chore_type_results,
+        "daily": {
+            day: {board: {b: round(v, 1) for b, v in by.items() if v} for board, by in boards.items()}
+            for day, boards in daily.items()
+        },
         "scores": {
             period: {
                 board: {bucket: round(v, 1) for bucket, v in by_bucket.items() if v}
