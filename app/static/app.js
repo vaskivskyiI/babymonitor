@@ -243,6 +243,10 @@ const I18N = {
     "By category": "За категоріями",
     "Per person and total": "По людях і разом",
     "Total": "Разом",
+    "Possible duplicate": "Можливий дубль",
+    "Add new anyway": "Все одно додати",
+    "Edit the previous one": "Змінити попередній",
+    "Cancel": "Скасувати",
     "How much did the baby eat?": "Скільки з'їла дитина?",
     "Enter other amount": "Інша кількість",
     "Skip": "Пропустити",
@@ -782,10 +786,10 @@ async function setNextDue(key, date) {
   loadDashboard();
 }
 
-function openDueModal(s) {
+async function openDueModal(s) {
   document.getElementById("due-modal-title").textContent = `${s.icon} ${t(s.label)}`;
-  const presets = [30, 60, 120, 180, 240, 300, 360];
-  const presetLabel = (m) => (m < 60 ? `${m}${t("min")}` : `${m / 60}h`);
+  const presets = await rankedPresets(`due:${s.chore_type}`, [30, 60, 120, 180, 240, 300, 360], 7);
+  const presetLabel = (m) => (m < 60 ? `${m}${t("min")}` : m % 60 === 0 ? `${m / 60}h` : `${Math.floor(m / 60)}h ${m % 60}${t("min")}`);
   const current = s.next_due
     ? `${t(s.overdue ? "Overdue by" : "Next")} ${fmtRelative(s.next_due, "in", true)} (${fmtClockTime(s.next_due)})`
     : "";
@@ -814,6 +818,7 @@ function openDueModal(s) {
       // relative to the last logged event, not to "now"; only without any
       // event on record does "now" make sense as the starting point
       const base = s.last_event ? new Date(s.last_event.timestamp).getTime() : Date.now();
+      recordUsage(`due:${s.chore_type}`, Number(btn.dataset.min));
       setNextDue(s.chore_type, new Date(base + Number(btn.dataset.min) * 60000));
     })
   );
@@ -823,6 +828,10 @@ function openDueModal(s) {
     const at = new Date();
     at.setHours(hh, mm, 0, 0);
     if (at <= new Date()) at.setDate(at.getDate() + 1); // that time already passed today -> tomorrow
+    // the interval this works out to (from the last event) also counts as a "used" value
+    const from = s.last_event ? new Date(s.last_event.timestamp).getTime() : Date.now();
+    const gap = Math.round((at.getTime() - from) / 300000) * 5;
+    if (gap > 0 && gap <= 24 * 60) recordUsage(`due:${s.chore_type}`, gap);
     setNextDue(s.chore_type, at);
   });
   const reset = body.querySelector("#due-reset");
@@ -853,6 +862,63 @@ document.getElementById("due-modal-close").addEventListener("click", closeDueMod
 document.getElementById("due-modal-backdrop").addEventListener("click", (e) => {
   if (e.target.id === "due-modal-backdrop") closeDueModal();
 });
+
+// ---------- most-used values ("smart presets") ----------
+
+// Preset values for a scope, most commonly used lately first, topped up with
+// the defaults (in their usual order) until there are `n` of them.
+async function rankedPresets(scope, defaults, n = defaults.length) {
+  let used = [];
+  try {
+    used = (await api("/api/common-values"))[scope] || [];
+  } catch (err) {
+    /* offline: just the defaults */
+  }
+  const out = used.slice(0, n);
+  for (const d of defaults) {
+    if (out.length >= n) break;
+    if (!out.includes(d)) out.push(d);
+  }
+  return out;
+}
+
+function recordUsage(scope, value) {
+  api("/api/usage", { method: "POST", body: JSON.stringify({ scope, value }) }).catch(() => {});
+}
+
+// ---------- duplicate guard ----------
+
+const DUPLICATE_GAP_MIN = 10;
+
+// Before recording a NEW event of this type: if the previous one is under 10
+// minutes old, ask whether it's really another one. Resolves true to go
+// ahead; false if cancelled (or the user chose to edit the previous entry).
+async function confirmNotDuplicate(choreTypeKey) {
+  let st;
+  try {
+    st = await api(`/api/status/${choreTypeKey}`);
+  } catch (err) {
+    return true;
+  }
+  const last = st.last_event;
+  if (!last) return true;
+  const mins = (Date.now() - new Date(last.timestamp).getTime()) / 60000;
+  if (mins < 0 || mins >= DUPLICATE_GAP_MIN) return true;
+  const ago = Math.max(1, Math.round(mins));
+  const ct = choreType(choreTypeKey);
+  const text =
+    state.lang === "uk"
+      ? `Останній запис "${tSummary(last.summary)}" (${t(ct ? ct.label : choreTypeKey)}) зроблено ${ago} хв тому. Додати ще один?`
+      : `The last "${tSummary(last.summary)}" (${t(ct ? ct.label : choreTypeKey)}) was recorded ${ago} min ago. Add another one?`;
+  const ans = await askModal(t("Possible duplicate"), text, [
+    { label: t("Add new anyway"), value: "new", primary: true },
+    { label: t("Edit the previous one"), value: "edit" },
+    { label: t("Cancel"), value: null },
+  ]);
+  if (ans === "new") return true;
+  if (ans === "edit") await editLastEntry(choreTypeKey, last.id);
+  return false;
+}
 
 // ---------- follow-up questions around feeding ----------
 
@@ -896,7 +962,7 @@ function feedingMissingAmount(status) {
 }
 
 async function promptFeedAmount(ev) {
-  const presets = [30, 60, 90, 120, 150];
+  const presets = await rankedPresets("feeding", [30, 60, 90, 120, 150], 5);
   const entries = (ev.data.entries || []).filter((e) => e);
   const methodName = {
     breast: "Breast", breast_left: "Breast (left)", breast_right: "Breast (right)", pumped: "Pumped milk (bottle)", formula: "Formula",
@@ -1051,10 +1117,12 @@ async function handleCardAction(choreTypeKey, action, targetEventId) {
       const event = await api(`/api/events/${targetEventId}`);
       openForm(choreTypeKey, "checkpoint", event);
     } else {
+      if (!(await confirmNotDuplicate(choreTypeKey))) return;
       if (choreTypeKey === "feeding") await preFeedChecks();
       openForm(choreTypeKey, "create");
     }
   } else {
+    if (!(await confirmNotDuplicate(choreTypeKey))) return;
     if (choreTypeKey === "feeding" && action !== "start") await preFeedChecks();
     openForm(choreTypeKey, "create");
   }
@@ -1073,6 +1141,7 @@ async function editLastEntry(choreTypeKey, eventId) {
 }
 
 async function logQuickAction(choreTypeKey, qa) {
+  if (!(await confirmNotDuplicate(choreTypeKey))) return;
   try {
     await api("/api/events", {
       method: "POST",
@@ -1089,6 +1158,7 @@ async function logQuickAction(choreTypeKey, qa) {
 // "right now" is almost always what's meant. The dashboard's "+" button is
 // the escape hatch for a specific time via the regular modal instead.
 async function quickStart(choreTypeKey) {
+  if (!(await confirmNotDuplicate(choreTypeKey))) return;
   try {
     await api("/api/events", {
       method: "POST",
@@ -1125,7 +1195,10 @@ async function quickEnd(eventId) {
 async function runFieldQuickAction(choreTypeKey, qa, status) {
   try {
     const sessionEventId = status.active_session_event_id || status.open_event_id;
-    if (!sessionEventId && choreTypeKey === "feeding") await preFeedChecks();
+    if (!sessionEventId) {
+      if (!(await confirmNotDuplicate(choreTypeKey))) return;
+      if (choreTypeKey === "feeding") await preFeedChecks();
+    }
     const event = sessionEventId ? await api(`/api/events/${sessionEventId}`) : null;
     const entries = event ? [...(event.data[qa.entries_field] || [])] : [];
     if (qa.mode === "log") {
@@ -1566,7 +1639,8 @@ async function deleteEvent(id) {
 }
 
 function refreshCurrentView() {
-  loadDashboard();
+  // chore types carry the usage-ranked quick-action amounts (e.g. water)
+  loadChoreTypes().then(loadDashboard);
   const activeTab = document.querySelector(".tab-btn.active").dataset.tab;
   if (activeTab === "history") loadHistory();
   if (activeTab === "stats") {

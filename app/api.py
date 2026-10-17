@@ -1,9 +1,10 @@
 import copy
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -380,13 +381,109 @@ def _configured_quick_actions(db: Session, key: str) -> list[dict]:
     return [_quick_action_dict(r) for r in db.execute(stmt).scalars().all()]
 
 
+# ---------- most-used values ("smart presets") ----------
+
+COMMON_LOOKBACK_DAYS = 60
+USAGE_KEEP = 60
+
+
+def _rank_by_use(values: list) -> list:
+    """Distinct values, most frequent first; ties go to the more recent one.
+    `values` is in chronological order (oldest first)."""
+    counts = Counter(values)
+    last_seen = {v: i for i, v in enumerate(values)}
+    return sorted(counts, key=lambda v: (-counts[v], -last_seen[v]))
+
+
+def _event_amounts(db: Session, chore_type: str, field: str) -> list:
+    """Amounts actually logged recently, oldest first: the top-level `field`
+    of each event, or - for entries-based types - each checkpoint's
+    amount_ml (or its weight difference, rounded to 5 ml/g)."""
+    since = _now() - timedelta(days=COMMON_LOOKBACK_DAYS)
+    stmt = (
+        select(Event)
+        .where(Event.chore_type == chore_type, Event.timestamp >= since)
+        .order_by(Event.timestamp.asc())
+    )
+    out = []
+    for e in db.execute(stmt).scalars():
+        v = e.data.get(field)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+            out.append(v)
+        for en in e.data.get("entries") or []:
+            if not isinstance(en, dict):
+                continue
+            a = en.get("amount_ml")
+            wb, wa = en.get("weight_before_g"), en.get("weight_after_g")
+            if isinstance(a, (int, float)) and a > 0:
+                out.append(a)
+            elif isinstance(wb, (int, float)) and isinstance(wa, (int, float)) and wa - wb > 0:
+                out.append(round((wa - wb) / 5) * 5)
+    return out
+
+
+def _usage_values(db: Session, scope: str) -> list:
+    s = db.get(Setting, f"usage:{scope}")
+    return list(s.value.get("values", [])) if s and s.value else []
+
+
+def _ranked_amounts(db: Session, ct) -> list:
+    """ct.default_amounts re-ordered/replaced by what's been used lately, same
+    length as the defaults: most common value first, defaults fill the rest."""
+    n = len(ct.default_amounts)
+    ranked = [v for v in _rank_by_use(_event_amounts(db, ct.key, ct.adaptive_amount_field))]
+    ranked = [int(v) if float(v).is_integer() else v for v in ranked][:n]
+    for d in ct.default_amounts:
+        if len(ranked) >= n:
+            break
+        if d not in ranked:
+            ranked.append(d)
+    return ranked
+
+
+@router.get("/common-values")
+def common_values(db: Session = Depends(get_db)):
+    """Most-used values per scope, most common first, for presets in the UI:
+    `feeding` (ml per checkpoint), `water`, and `due:<chore type>` (reminder
+    intervals in minutes that were picked). Scopes with no history are omitted."""
+    result = {}
+    for key, field in (("feeding", "amount_ml"), ("water", "amount_ml")):
+        ranked = _rank_by_use(_event_amounts(db, key, field))
+        if ranked:
+            result[key] = [int(v) if float(v).is_integer() else v for v in ranked]
+    for s in db.execute(select(Setting).where(Setting.key.like("usage:%"))).scalars():
+        ranked = _rank_by_use(list((s.value or {}).get("values", [])))
+        if ranked:
+            result[s.key[len("usage:"):]] = ranked
+    return result
+
+
+class UsageIn(BaseModel):
+    scope: str
+    value: float
+
+
+@router.post("/usage")
+def record_usage(body: UsageIn, db: Session = Depends(get_db)):
+    """Remember a value picked from a preset list (e.g. a reminder interval)
+    so it can be offered first next time."""
+    values = _usage_values(db, body.scope)
+    values.append(int(body.value) if float(body.value).is_integer() else body.value)
+    _set_setting(db, f"usage:{body.scope}", {"values": values[-USAGE_KEEP:]})
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/chore-types")
 def list_chore_types(include_disabled: bool = False, db: Session = Depends(get_db)):
     metas = _all_chore_type_metas(db)
     result = []
     for ct in _effective_chore_types(db, enabled_only=not include_disabled):
         d = ct.as_dict(_interval_minutes(db, ct), _session_window_minutes(db, ct))
-        d["quick_actions"] = list(d.get("quick_actions") or []) + _configured_quick_actions(db, ct.key)
+        builtin_qa = list(d.get("quick_actions") or [])
+        if ct.adaptive_amount_field:
+            builtin_qa = ct.amount_quick_actions(_ranked_amounts(db, ct))
+        d["quick_actions"] = builtin_qa + _configured_quick_actions(db, ct.key)
         d["is_builtin"] = ct.key in REGISTRY
         d["enabled"] = metas[ct.key].enabled if ct.key in metas else True
         d["reminder_enabled"] = _reminder_enabled(db, ct.key)

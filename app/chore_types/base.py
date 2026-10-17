@@ -99,6 +99,11 @@ class ChoreType:
     # extra competition boards counting events where ANY of the listed
     # boolean fields is true: [{"name", "label", "any_of": [...]}]
     derived_counts: list[dict] = []
+    # builtin quick-action buttons that log a fixed amount of this numeric
+    # field are re-ranked by what has actually been used lately
+    # (see api._ranked_amounts); defaults pad the list when history is short
+    adaptive_amount_field: Optional[str] = None
+    default_amounts: list[float] = []
 
     # "Session" support: lets a chore type keep appending timestamped
     # checkpoints (via an "entries" field) to the same event instead of
@@ -129,6 +134,10 @@ class ChoreType:
         Logged instantly with the current timestamp - no form needed. For
         types where a form is unavoidable (numeric input, checkpoints),
         leave this empty and rely on the regular log/checkpoint button."""
+        return []
+
+    def amount_quick_actions(self, amounts: list) -> list[dict]:
+        """Quick-action buttons for the given amounts (see adaptive_amount_field)."""
         return []
 
     def summarize(self, data: dict) -> str:
