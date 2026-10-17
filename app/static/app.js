@@ -243,6 +243,7 @@ const I18N = {
     "By category": "За категоріями",
     "Per person and total": "По людях і разом",
     "Total": "Разом",
+    "Breastfeedings": "Годування грудьми",
     "Yes, end sleep": "Так, завершити сон",
     "No, keep sleeping": "Ні, ще спить",
     "Possible duplicate": "Можливий дубль",

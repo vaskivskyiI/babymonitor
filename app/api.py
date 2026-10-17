@@ -384,7 +384,7 @@ def _configured_quick_actions(db: Session, key: str) -> list[dict]:
 
 # ---------- most-used values ("smart presets") ----------
 
-COMMON_LOOKBACK_DAYS = 60
+COMMON_LOOKBACK_DAYS = 5
 USAGE_KEEP = 60
 
 
@@ -423,9 +423,23 @@ def _event_amounts(db: Session, chore_type: str, field: str) -> list:
     return out
 
 
-def _usage_values(db: Session, scope: str) -> list:
+def _usage_raw(db: Session, scope: str) -> list:
     s = db.get(Setting, f"usage:{scope}")
     return list(s.value.get("values", [])) if s and s.value else []
+
+
+def _recent_usage(raw: list) -> list:
+    """Picked values from the last COMMON_LOOKBACK_DAYS, oldest first. Entries
+    are [value, iso time]; bare numbers (older format) count as recent."""
+    cutoff = (_now() - timedelta(days=COMMON_LOOKBACK_DAYS)).isoformat()
+    out = []
+    for item in raw:
+        if isinstance(item, list) and len(item) == 2:
+            if item[1] >= cutoff:
+                out.append(item[0])
+        else:
+            out.append(item)
+    return out
 
 
 def _ranked_amounts(db: Session, ct) -> list:
@@ -453,7 +467,7 @@ def common_values(db: Session = Depends(get_db)):
         if ranked:
             result[key] = [int(v) if float(v).is_integer() else v for v in ranked]
     for s in db.execute(select(Setting).where(Setting.key.like("usage:%"))).scalars():
-        ranked = _rank_by_use(list((s.value or {}).get("values", [])))
+        ranked = _rank_by_use(_recent_usage(list((s.value or {}).get("values", []))))
         if ranked:
             result[s.key[len("usage:"):]] = ranked
     return result
@@ -468,8 +482,8 @@ class UsageIn(BaseModel):
 def record_usage(body: UsageIn, db: Session = Depends(get_db)):
     """Remember a value picked from a preset list (e.g. a reminder interval)
     so it can be offered first next time."""
-    values = _usage_values(db, body.scope)
-    values.append(int(body.value) if float(body.value).is_integer() else body.value)
+    values = _usage_raw(db, body.scope)
+    values.append([int(body.value) if float(body.value).is_integer() else body.value, _now().isoformat()])
     _set_setting(db, f"usage:{body.scope}", {"values": values[-USAGE_KEEP:]})
     db.commit()
     return {"ok": True}
@@ -876,6 +890,19 @@ def _competition_weight_overrides(db: Session) -> dict[str, float]:
     return dict(setting.value.get("weights", {})) if setting and setting.value else {}
 
 
+def _derived_hit(d: dict, data: dict) -> bool:
+    """Does this event count towards a derived board? Either any of the listed
+    boolean fields is true, or any entry has one of the listed values."""
+    if any(data.get(f) for f in d.get("any_of", [])):
+        return True
+    spec = d.get("entry_values")
+    if spec:
+        return any(
+            isinstance(en, dict) and en.get(spec["key"]) in spec["values"] for en in data.get(spec["field"]) or []
+        )
+    return False
+
+
 @router.put("/competition/weights")
 def update_competition_weights(body: CompetitionWeightsUpdate, db: Session = Depends(get_db)):
     """Set the difficulty weight of boards for everyone: `{board_id: weight}`;
@@ -969,7 +996,7 @@ def competition(db: Session = Depends(get_db)):
                 board_scores = scores[period]
                 board_scores[f"{ct.key}:count"][bucket] += 1
                 for d in ct.derived_counts:
-                    if any(e.data.get(f) for f in d["any_of"]):
+                    if _derived_hit(d, e.data):
                         board_scores[f"{ct.key}:{d['name']}"][bucket] += 1
                 for f in fields:
                     val = e.data.get(f.name)

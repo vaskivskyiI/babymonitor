@@ -23,7 +23,21 @@ class FeedingChoreType(ChoreType):
     label = "Feeding"
     icon = "🍼"
     default_interval_minutes = 180
-    board_weights = {"count": 2, "total_amount_ml": 1, "total_breast_amount_ml": 1, "total_formula_amount_ml": 1}
+    board_weights = {
+        "count": 2,
+        "total_amount_ml": 1,
+        "total_breast_amount_ml": 2,
+        "total_formula_amount_ml": 1,
+        "breastfeeds": 3,
+    }
+    # feedings that included actual nursing (not just a bottle of pumped milk)
+    derived_counts = [
+        {
+            "name": "breastfeeds",
+            "label": "Breastfeedings",
+            "entry_values": {"field": "entries", "key": "method", "values": ["breast", "breast_left", "breast_right"]},
+        },
+    ]
 
     # A feeding is a session: you can keep adding timestamped checkpoints
     # (weight / amount / type) to the same feeding as it happens, e.g.
