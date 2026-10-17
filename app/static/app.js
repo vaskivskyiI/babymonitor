@@ -240,6 +240,7 @@ const I18N = {
     // competition
     "Standings": "Турнірна таблиця",
     "Who leads what": "Хто в чому лідирує",
+    "Points by category": "Бали за категоріями",
     "By category": "За категоріями",
     "Per person and total": "По людях і разом",
     "Total": "Разом",
@@ -2411,44 +2412,57 @@ function leaderChips(data, r, board) {
     .join("");
 }
 
+// Points each person earned in each board (summed over the days of the period).
+function compBoardPoints(data, period) {
+  const out = {};
+  const boards = compBoards(data).filter((b) => !b.hidden);
+  compPeriodDays(data, period).forEach((day) => {
+    const dayScores = data.daily[day] || {};
+    boards.forEach((b) => {
+      const r = rankValues(data, dayScores[b.id] || {});
+      if (!r.contested) return;
+      r.people.forEach((e) => {
+        if (e.rank > 3) return;
+        out[b.id] = out[b.id] || {};
+        out[b.id][e.bucket] = (out[b.id][e.bucket] || 0) + COMP_POINTS[e.rank - 1] * (b.weight ?? 1);
+      });
+    });
+  });
+  return out;
+}
+
+// Rows = every category/board, columns = each person: the points they earned there.
 function leadersTableHtml(data, period) {
-  const head = COMP_LEADER_PERIODS.map(
-    (p) => `<th class="${p === period ? "sel" : ""}">${compPeriodLabel(p)}</th>`
-  ).join("");
+  const people = data.people.map((p) => String(p.id));
+  const pts = compBoardPoints(data, period);
+  const fmt = (v) => (v ? String(Math.round(v * 10) / 10) : "–");
+  const head = people
+    .map((k) => `<th>${avatarHtml(compBucket(data, k))} ${esc(compBucket(data, k).name)}</th>`)
+    .join("");
+  const best = (by) => Math.max(0, ...people.map((k) => by[k] || 0));
+  const cells = (by) => {
+    const top = best(by);
+    return people.map((k) => `<td class="${top && (by[k] || 0) === top ? "pts-top" : ""}">${fmt(by[k])}</td>`).join("");
+  };
 
-  // overall leader per period (by points)
-  const overall = COMP_LEADER_PERIODS.map((p) => {
-    const rows = compStandings(data, p);
-    const top = rows.filter((r) => r.points > 0 && r.rank === 1);
-    const cell = top.length
-      ? top
-          .map((e) => `<span class="lead-chip">${avatarHtml(e)}<span class="lead-name">${esc(e.name)}</span> <b>${e.points} ${t("pts")}</b></span>`)
-          .join("")
-      : `<span class="muted">–</span>`;
-    return `<td class="${p === period ? "sel" : ""}">${cell}</td>`;
-  }).join("");
+  const standings = compStandings(data, period);
+  const byPerson = {};
+  standings.forEach((r) => (byPerson[r.id] = r.points));
+  let body = `<tr class="overall"><th>👑 ${t("Overall")}</th>${cells(byPerson)}</tr>`;
 
-  let body = `<tr class="overall"><th>👑 ${t("Overall")}</th>${overall}</tr>`;
   data.chore_types.forEach((ct) => {
-    const boards = ct.boards.filter((b) => !state.competition.hidden.has(b.id));
-    // a category only earns its rows if somebody has scored in it in these periods
-    const rowsHtml = boards
-      .map((b) => {
-        const ranks = COMP_LEADER_PERIODS.map((p) => rankBoard(data, b.id, p));
-        if (ranks.every((r) => !r.people.length)) return "";
-        const cells = ranks
-          .map((r, i) => `<td class="${COMP_LEADER_PERIODS[i] === period ? "sel" : ""}">${leaderChips(data, r, b)}</td>`)
-          .join("");
-        return `<tr><th class="metric">${t(b.label)}${b.unit && b.display !== "duration" ? ` <span class="muted">(${esc(b.unit)})</span>` : ""}</th>${cells}</tr>`;
-      })
+    const rows = ct.boards
+      .filter((b) => !state.competition.hidden.has(b.id) && pts[b.id])
+      .map(
+        (b) =>
+          `<tr><th class="metric">${t(b.label)}${b.weight !== 1 ? ` <span class="muted">×${b.weight}</span>` : ""}</th>${cells(pts[b.id])}</tr>`
+      )
       .join("");
-    if (rowsHtml) {
-      body += `<tr class="cat"><th colspan="${COMP_LEADER_PERIODS.length + 1}">${ct.icon} ${t(ct.label)}</th></tr>${rowsHtml}`;
-    }
+    if (rows) body += `<tr class="cat"><th colspan="${people.length + 1}">${ct.icon} ${t(ct.label)}</th></tr>${rows}`;
   });
   return `<section class="comp-section">
-      <h2>👑 ${t("Who leads what")}</h2>
-      <div class="leaders-wrap"><table class="leaders-table"><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table></div>
+      <h2>🏅 ${t("Points by category")} <small>${compPeriodTitle(period)}</small></h2>
+      <div class="leaders-wrap"><table class="leaders-table points-table"><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table></div>
     </section>`;
 }
 

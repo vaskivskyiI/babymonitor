@@ -1142,3 +1142,7 @@ details.field-help[open] summary { margin-bottom: 0.2rem; }
 .cfg-board-wrap { display: inline-flex; align-items: center; gap: 0.35rem; }
 .cfg-weight { display: inline-flex; align-items: center; gap: 0.15rem; font-size: 0.8rem; color: var(--muted); }
 .cfg-weight input { width: 3.6rem; min-height: 30px; padding: 0.15rem 0.3rem; font-size: 0.85rem; }
+
+.points-table td { text-align: right; white-space: nowrap; }
+.points-table td.pts-top { font-weight: 700; color: var(--primary); }
+.points-table thead th .avatar { vertical-align: middle; margin-right: 0.25rem; }
