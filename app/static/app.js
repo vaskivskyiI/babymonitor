@@ -870,8 +870,9 @@ document.getElementById("due-modal-backdrop").addEventListener("click", (e) => {
 
 // ---------- most-used values ("smart presets") ----------
 
-// Preset values for a scope, most commonly used lately first, topped up with
-// the defaults (in their usual order) until there are `n` of them.
+// Preset values for a scope: the `n` most commonly used lately (topped up
+// with the defaults when history is short), shown in ascending order so
+// they're easy to scan.
 async function rankedPresets(scope, defaults, n = defaults.length) {
   let used = [];
   try {
@@ -884,7 +885,7 @@ async function rankedPresets(scope, defaults, n = defaults.length) {
     if (out.length >= n) break;
     if (!out.includes(d)) out.push(d);
   }
-  return out;
+  return out.sort((a, b) => a - b);
 }
 
 function recordUsage(scope, value) {

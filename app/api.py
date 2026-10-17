@@ -443,8 +443,8 @@ def _recent_usage(raw: list) -> list:
 
 
 def _ranked_amounts(db: Session, ct) -> list:
-    """ct.default_amounts re-ordered/replaced by what's been used lately, same
-    length as the defaults: most common value first, defaults fill the rest."""
+    """ct.default_amounts replaced by what's been used lately, same length as
+    the defaults: the most common values, defaults fill the rest, ascending."""
     n = len(ct.default_amounts)
     ranked = [v for v in _rank_by_use(_event_amounts(db, ct.key, ct.adaptive_amount_field))]
     ranked = [int(v) if float(v).is_integer() else v for v in ranked][:n]
@@ -453,7 +453,7 @@ def _ranked_amounts(db: Session, ct) -> list:
             break
         if d not in ranked:
             ranked.append(d)
-    return ranked
+    return sorted(ranked)  # the most used values, shown smallest to largest
 
 
 @router.get("/common-values")
