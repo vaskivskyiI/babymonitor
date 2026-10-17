@@ -8,6 +8,7 @@ class WaterChoreType(ChoreType):
     icon = "🚰"
     # drinks aren't on a rolling schedule - no "next due"
     default_interval_minutes = None
+    board_weights = {"count": 0.5, "amount_ml": 0.5}
     adaptive_amount_field = "amount_ml"
     default_amounts = [10, 30, 50, 100]
 

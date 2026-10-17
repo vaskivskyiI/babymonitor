@@ -16,6 +16,7 @@ class ProbioticChoreType(ChoreType):
     interval_configurable = False
     fixed_reminder_note = "Due once per calendar day"
     daily_reminder = True
+    board_weights = {"count": 0.5}
 
     fields = [
         FieldDef(name="notes", label="Notes", type="textarea"),

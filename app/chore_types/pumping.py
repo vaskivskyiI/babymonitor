@@ -17,6 +17,7 @@ class PumpingChoreType(ChoreType):
     label = "Pumping"
     icon = "🍶"
     default_interval_minutes = 240
+    board_weights = {"count": 2, "total_amount_ml": 1}
 
     fields = [
         FieldDef(

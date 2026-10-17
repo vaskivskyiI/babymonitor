@@ -24,6 +24,7 @@ from app.reference_ranges import (
 from app.schemas import (
     ChoreTypeMetaUpdate,
     CompetitionHiddenUpdate,
+    CompetitionWeightsUpdate,
     CustomChoreTypeCreate,
     CustomChoreTypeUpdate,
     EventCreate,
@@ -867,6 +868,27 @@ def status_all(db: Session = Depends(get_db)):
 
 COMPETITION_PERIODS = ("today", "7", "30", "all")
 COMPETITION_HIDDEN_KEY = "competition_hidden"
+COMPETITION_WEIGHTS_KEY = "competition_weights"
+
+
+def _competition_weight_overrides(db: Session) -> dict[str, float]:
+    setting = db.get(Setting, COMPETITION_WEIGHTS_KEY)
+    return dict(setting.value.get("weights", {})) if setting and setting.value else {}
+
+
+@router.put("/competition/weights")
+def update_competition_weights(body: CompetitionWeightsUpdate, db: Session = Depends(get_db)):
+    """Set the difficulty weight of boards for everyone: `{board_id: weight}`;
+    a null weight resets that board to its built-in default."""
+    weights = _competition_weight_overrides(db)
+    for board, w in body.weights.items():
+        if w is None:
+            weights.pop(board, None)
+        else:
+            weights[board] = max(0.0, min(float(w), 20.0))
+    _set_setting(db, COMPETITION_WEIGHTS_KEY, {"weights": weights})
+    db.commit()
+    return {"weights": weights}
 
 
 def _competition_hidden(db: Session) -> list[str]:
@@ -910,6 +932,7 @@ def competition(db: Session = Depends(get_db)):
     people = db.execute(select(Person).order_by(Person.sort_order, Person.id)).scalars().all()
 
     chore_type_results = []
+    weight_overrides = _competition_weight_overrides(db)
     scores: dict[str, dict[str, dict[str, float]]] = {p: {} for p in COMPETITION_PERIODS}
     for ct in _effective_chore_types(db, enabled_only=True):
         events = db.execute(select(Event).where(Event.chore_type == ct.key)).scalars().all()
@@ -928,6 +951,10 @@ def competition(db: Session = Depends(get_db)):
             {"id": f"{ct.key}:{d['name']}", "metric": d["name"], "label": d["label"], "unit": "", "display": None}
             for d in ct.derived_counts
         ]
+        for b in boards:
+            default_w = float(ct.board_weights.get(b["metric"], 1))
+            b["default_weight"] = default_w
+            b["weight"] = float(weight_overrides.get(b["id"], default_w))
         for period in COMPETITION_PERIODS:
             for b in boards:
                 scores[period][b["id"]] = defaultdict(float)

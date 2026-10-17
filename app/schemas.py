@@ -88,6 +88,10 @@ class StatusOut(BaseModel):
     last_true: dict[str, datetime] = {}
 
 
+class CompetitionWeightsUpdate(BaseModel):
+    weights: dict[str, Optional[float]] = {}
+
+
 class CompetitionHiddenUpdate(BaseModel):
     """Change which competition boards are hidden, for everyone. Set-based
     (hide these, show those) instead of "replace the list", so two people

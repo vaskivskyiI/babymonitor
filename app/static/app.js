@@ -243,6 +243,8 @@ const I18N = {
     "By category": "За категоріями",
     "Per person and total": "По людях і разом",
     "Total": "Разом",
+    "Yes, end sleep": "Так, завершити сон",
+    "No, keep sleeping": "Ні, ще спить",
     "Possible duplicate": "Можливий дубль",
     "Add new anyway": "Все одно додати",
     "Edit the previous one": "Змінити попередній",
@@ -274,6 +276,8 @@ const I18N = {
     "Nothing logged in this period yet.": "За цей період ще нічого не записано.",
     "Nothing contested in this period yet - it takes two people logging the same thing.": "За цей період ще немає змагання - потрібно, щоб двоє людей записували те саме.",
     "3 points for 1st, 2 for 2nd and 1 for 3rd in every category where at least two people are competing. Scores count who logged each entry.": "3 очки за 1-е місце, 2 за 2-е і 1 за 3-є в кожній категорії, де змагаються щонайменше двоє. Рахується, хто зробив запис.",
+    "Points are multiplied by each category's difficulty (set in the list below, e.g. ×2 for a dirty diaper).": "Бали множаться на складність категорії (задається в списку нижче, напр. ×2 за брудний підгузок).",
+    "Difficulty (points multiplier)": "Складність (множник балів)",
     // push: lead time, delivery diagnostics
     "Notify": "Сповіщати за",
     "min before due": "хв до терміну",
@@ -920,6 +924,44 @@ async function confirmNotDuplicate(choreTypeKey) {
   return false;
 }
 
+// If the baby is asleep (an open sleep, or any start/end type), logging
+// something else usually means they woke up - offer to end the sleep first.
+async function confirmSleepOpen(choreTypeKey) {
+  const self = choreType(choreTypeKey);
+  if (self && self.has_start_end) return true;
+  const open = state.choreTypes.filter((c) => c.has_start_end);
+  for (const c of open) {
+    let st;
+    try {
+      st = await api(`/api/status/${c.key}`);
+    } catch (err) {
+      continue;
+    }
+    if (!st.open_event_id) continue;
+    const since = st.last_event ? fmtRelative(st.last_event.timestamp) : "";
+    const ans = await askModal(
+      `${c.icon} ${t(c.label)}`,
+      state.lang === "uk"
+        ? `Малюк зараз спить (${since}). Завершити сон?`
+        : `The baby is asleep (started ${since}). End sleep now?`,
+      [
+        { label: t("Yes, end sleep"), value: "end", primary: true },
+        { label: t("No, keep sleeping"), value: "keep" },
+        { label: t("Cancel"), value: null },
+      ]
+    );
+    if (ans === null) return false;
+    if (ans === "end") await quickEnd(st.open_event_id);
+  }
+  return true;
+}
+
+// Everything to settle before a NEW event of this type is recorded.
+async function confirmNewEvent(choreTypeKey) {
+  if (!(await confirmNotDuplicate(choreTypeKey))) return false;
+  return confirmSleepOpen(choreTypeKey);
+}
+
 // ---------- follow-up questions around feeding ----------
 
 // Generic question dialog: resolves with the clicked button's value, or null
@@ -1117,12 +1159,12 @@ async function handleCardAction(choreTypeKey, action, targetEventId) {
       const event = await api(`/api/events/${targetEventId}`);
       openForm(choreTypeKey, "checkpoint", event);
     } else {
-      if (!(await confirmNotDuplicate(choreTypeKey))) return;
+      if (!(await confirmNewEvent(choreTypeKey))) return;
       if (choreTypeKey === "feeding") await preFeedChecks();
       openForm(choreTypeKey, "create");
     }
   } else {
-    if (!(await confirmNotDuplicate(choreTypeKey))) return;
+    if (!(await confirmNewEvent(choreTypeKey))) return;
     if (choreTypeKey === "feeding" && action !== "start") await preFeedChecks();
     openForm(choreTypeKey, "create");
   }
@@ -1141,7 +1183,7 @@ async function editLastEntry(choreTypeKey, eventId) {
 }
 
 async function logQuickAction(choreTypeKey, qa) {
-  if (!(await confirmNotDuplicate(choreTypeKey))) return;
+  if (!(await confirmNewEvent(choreTypeKey))) return;
   try {
     await api("/api/events", {
       method: "POST",
@@ -1158,7 +1200,7 @@ async function logQuickAction(choreTypeKey, qa) {
 // "right now" is almost always what's meant. The dashboard's "+" button is
 // the escape hatch for a specific time via the regular modal instead.
 async function quickStart(choreTypeKey) {
-  if (!(await confirmNotDuplicate(choreTypeKey))) return;
+  if (!(await confirmNewEvent(choreTypeKey))) return;
   try {
     await api("/api/events", {
       method: "POST",
@@ -1196,7 +1238,7 @@ async function runFieldQuickAction(choreTypeKey, qa, status) {
   try {
     const sessionEventId = status.active_session_event_id || status.open_event_id;
     if (!sessionEventId) {
-      if (!(await confirmNotDuplicate(choreTypeKey))) return;
+      if (!(await confirmNewEvent(choreTypeKey))) return;
       if (choreTypeKey === "feeding") await preFeedChecks();
     }
     const event = sessionEventId ? await api(`/api/events/${sessionEventId}`) : null;
@@ -2167,11 +2209,12 @@ function compStandings(data, period) {
       r.people.forEach((e) => {
         const row = table[e.bucket];
         if (!row || e.rank > 3) return;
-        row.points += COMP_POINTS[e.rank - 1];
+        row.points += COMP_POINTS[e.rank - 1] * (b.weight ?? 1);
         row.medals[e.rank - 1] += 1;
         if (e.rank === 1) row.led += 1;
       });
     });
+  Object.values(table).forEach((row) => (row.points = Math.round(row.points * 10) / 10));
   const rows = Object.values(table).sort(
     (a, b) => b.points - a.points || b.medals[0] - a.medals[0] || b.medals[1] - a.medals[1] || a.name.localeCompare(b.name)
   );
@@ -2321,7 +2364,7 @@ function standingsHtml(data, period) {
       <h2>🏆 ${t("Standings")} <small>${compPeriodTitle(period)}</small></h2>
       ${contested ? podium : `<p class="muted-note">${t("Nothing contested in this period yet - it takes two people logging the same thing.")}</p>`}
       <div class="standings">${list}</div>
-      <div class="comp-note">${t("3 points for 1st, 2 for 2nd and 1 for 3rd in every category where at least two people are competing. Scores count who logged each entry.")}</div>
+      <div class="comp-note">${t("3 points for 1st, 2 for 2nd and 1 for 3rd in every category where at least two people are competing. Scores count who logged each entry.")} ${t("Points are multiplied by each category's difficulty (set in the list below, e.g. ×2 for a dirty diaper).")}</div>
     </section>`;
 }
 
@@ -2474,7 +2517,7 @@ function renderCompetitionConfig() {
             <strong>${ct.icon} ${t(ct.label)}</strong></label>
           <div class="cfg-boards">${ct.boards
             .map(
-              (b) => `<label class="cfg-board"><input type="checkbox" data-board="${b.id}" ${c.hidden.has(b.id) ? "" : "checked"}> ${t(b.label)}${b.unit && b.display !== "duration" ? ` <span class="muted">(${esc(b.unit)})</span>` : ""}</label>`
+              (b) => `<span class="cfg-board-wrap"><label class="cfg-board"><input type="checkbox" data-board="${b.id}" ${c.hidden.has(b.id) ? "" : "checked"}> ${t(b.label)}${b.unit && b.display !== "duration" ? ` <span class="muted">(${esc(b.unit)})</span>` : ""}</label><label class="cfg-weight" title="${t("Difficulty (points multiplier)")}">×<input type="number" min="0" max="20" step="0.5" inputmode="decimal" data-weight="${b.id}" data-default="${b.default_weight}" value="${b.weight}"></label></span>`
             )
             .join("")}</div>
         </div>`;
@@ -2495,6 +2538,22 @@ function renderCompetitionConfig() {
     box.addEventListener("change", () => {
       if (box.checked) updateCompHidden([], [box.dataset.board]);
       else updateCompHidden([box.dataset.board], []);
+    });
+  });
+  el.querySelectorAll("[data-weight]").forEach((inp) => {
+    inp.addEventListener("change", async () => {
+      const raw = inp.value.trim();
+      const w = raw === "" ? null : Math.max(0, Number(raw));
+      try {
+        await api("/api/competition/weights", {
+          method: "PUT",
+          body: JSON.stringify({ weights: { [inp.dataset.weight]: w === Number(inp.dataset.default) ? null : w } }),
+        });
+        await fetchCompetitionData();
+        refreshCompetitionViews();
+      } catch (err) {
+        toast(t("Error: ") + err.message);
+      }
     });
   });
   el.querySelector("#comp-show-all").addEventListener("click", () => updateCompHidden([], [...c.hidden]));

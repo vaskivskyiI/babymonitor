@@ -7,6 +7,7 @@ class DiaperChoreType(ChoreType):
     label = "Diaper Change"
     icon = "🧷"
     default_interval_minutes = 180
+    board_weights = {"count": 1, "pee": 1, "poop": 2, "peed_during_change": 2, "pooped_during_change": 3, "soiled": 1}
     # a pee/poop during the change is still a pee/poop for "time since last"
     last_true_groups = {
         "pee": ["pee", "peed_during_change"],

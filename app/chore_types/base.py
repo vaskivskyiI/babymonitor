@@ -103,6 +103,10 @@ class ChoreType:
     # field are re-ranked by what has actually been used lately
     # (see api._ranked_amounts); defaults pad the list when history is short
     adaptive_amount_field: Optional[str] = None
+    # competition difficulty: points for a placing are multiplied by the
+    # board's weight. Keys: "count" (the Events board) or a field name;
+    # anything missing weighs 1. The household can override these (Settings).
+    board_weights: dict[str, float] = {}
     default_amounts: list[float] = []
 
     # "Session" support: lets a chore type keep appending timestamped

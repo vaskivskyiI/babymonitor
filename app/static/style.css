@@ -1138,3 +1138,7 @@ details.field-help[open] summary { margin-bottom: 0.2rem; }
 .ask-text { margin: 0 0 0.9rem; color: var(--muted); }
 .ask-buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .ask-buttons .btn { flex: 1 1 30%; }
+
+.cfg-board-wrap { display: inline-flex; align-items: center; gap: 0.35rem; }
+.cfg-weight { display: inline-flex; align-items: center; gap: 0.15rem; font-size: 0.8rem; color: var(--muted); }
+.cfg-weight input { width: 3.6rem; min-height: 30px; padding: 0.15rem 0.3rem; font-size: 0.85rem; }

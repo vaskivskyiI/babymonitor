@@ -23,6 +23,7 @@ class FeedingChoreType(ChoreType):
     label = "Feeding"
     icon = "🍼"
     default_interval_minutes = 180
+    board_weights = {"count": 2, "total_amount_ml": 1, "total_breast_amount_ml": 1, "total_formula_amount_ml": 1}
 
     # A feeding is a session: you can keep adding timestamped checkpoints
     # (weight / amount / type) to the same feeding as it happens, e.g.

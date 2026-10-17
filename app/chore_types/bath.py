@@ -8,6 +8,7 @@ class BathChoreType(ChoreType):
     icon = "🛁"
     # no fixed reminder - bathing isn't on a rolling interval
     default_interval_minutes = None
+    board_weights = {"count": 3, "soap": 1}
 
     fields = [
         FieldDef(name="soap", label="With soap", type="boolean", numeric_stat=True),
