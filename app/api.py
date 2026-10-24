@@ -1,6 +1,7 @@
 import copy
 from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta, timezone
+import math
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -177,6 +178,51 @@ def _next_due_override(db: Session, key: str, last: Event | None) -> tuple[datet
         return due, None
 
 
+HABIT_DAYS = 14  # how far back to look for a once-a-day routine
+HABIT_MIN_DAYS = 5  # ... which needs at least this many days with the event
+
+
+def _daily_habit_minute(db: Session, ct, tz: ZoneInfo) -> int | None:
+    """Minute of the (local) day an event that happens about once a day
+    usually gets logged, or None if this isn't a daily routine. A routine =
+    logged on at least half of the last 14 days, rarely more than once a day,
+    at a fairly consistent time (so probiotic yes, water or feeding no)."""
+    if ct.has_start_end:
+        return None
+    if not (ct.daily_reminder or _interval_minutes(db, ct) is None):
+        return None  # has its own interval-based reminder
+    since = _now() - timedelta(days=HABIT_DAYS)
+    stmt = select(Event.timestamp).where(Event.chore_type == ct.key, Event.timestamp >= since)
+    days: dict[date, list[int]] = defaultdict(list)
+    for (ts,) in db.execute(stmt):
+        local = as_utc(ts).astimezone(tz)
+        days[local.date()].append(local.hour * 60 + local.minute)
+    if len(days) < max(HABIT_MIN_DAYS, HABIT_DAYS // 2):
+        return None
+    if sum(1 for v in days.values() if len(v) > 1) > 0.2 * len(days):
+        return None
+    angles = [2 * math.pi * min(v) / 1440 for v in days.values()]
+    x = sum(math.cos(a) for a in angles) / len(angles)
+    y = sum(math.sin(a) for a in angles) / len(angles)
+    if math.hypot(x, y) < 0.6:  # times all over the clock: no usual time
+        return None
+    return round(math.atan2(y, x) / (2 * math.pi) * 1440) % 1440
+
+
+def _habit_due(habit: int, last_ts: datetime | None, tz: ZoneInfo) -> tuple[datetime, datetime]:
+    """(due, armed_at): today's usual time, or tomorrow's once today's is done."""
+    now_local = _now().astimezone(tz)
+    today = now_local.date()
+
+    def at(d: date) -> datetime:
+        return datetime.combine(d, dtime(habit // 60, habit % 60), tzinfo=tz).astimezone(timezone.utc)
+
+    if last_ts is not None and last_ts.astimezone(tz).date() == today:
+        return at(today + timedelta(days=1)), last_ts
+    midnight = datetime.combine(today, dtime(0, 0), tzinfo=tz).astimezone(timezone.utc)
+    return at(today), midnight
+
+
 def _next_due_info(db: Session, ct, last: Event | None, tz: ZoneInfo) -> dict:
     """{"due", "overridden", "armed_at"}: when the reminder is due, whether
     that was set by hand, and when this due time came into being (the last
@@ -190,6 +236,10 @@ def _next_due_info(db: Session, ct, last: Event | None, tz: ZoneInfo) -> dict:
         due, set_at = override
         return {"due": due, "overridden": True, "armed_at": set_at}
     last_ts = as_utc(last.timestamp) if last else None
+    habit = _daily_habit_minute(db, ct, tz)
+    if habit is not None:
+        due, armed = _habit_due(habit, last_ts, tz)
+        return {"due": due, "overridden": False, "armed_at": armed, "habit_minute": habit}
     return {
         "due": ct.next_due(last_ts, _interval_minutes(db, ct), tz),
         "overridden": False,
@@ -811,7 +861,9 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
     last = _last_event(db, ct.key)
     interval = _interval_minutes(db, ct)
     last_out = _event_out(ct, last, db) if last else None
-    next_due, next_due_overridden = _compute_next_due(db, ct, last, tz)
+    due_info = _next_due_info(db, ct, last, tz)
+    next_due, next_due_overridden = due_info["due"], due_info["overridden"]
+    habit_minute = due_info.get("habit_minute")
     overdue = bool(next_due and next_due < _now())
 
     active_session_event_id = None
@@ -862,6 +914,7 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
         last_event=last_out,
         next_due=next_due,
         next_due_overridden=next_due_overridden,
+        habit_time=(f"{habit_minute // 60:02d}:{habit_minute % 60:02d}" if habit_minute is not None else None),
         reminder_enabled=_reminder_enabled(db, ct.key),
         interval_minutes=interval,
         overdue=overdue,
@@ -1119,6 +1172,38 @@ def _growth_forecast(
     return points
 
 
+def _growth_percentiles(db: Session, profile: dict, sex: str, tz: ZoneInfo, since_date: date) -> dict:
+    """WHO percentile of every weight and height reading (one per day, the
+    last of the day) from `since_date` on, keyed by field - so the weight and
+    the height page can both draw the two on one chart."""
+    out: dict[str, list[dict]] = {}
+    for key, field in (("weight", "weight_g"), ("height", "height_cm")):
+        growth = growth_field(key, field)
+        if not growth:
+            continue
+        metric, factor, _ = growth
+        by_day: dict[date, float] = {}
+        stmt = select(Event).where(Event.chore_type == key).order_by(Event.timestamp.asc())
+        for e in db.execute(stmt).scalars():
+            v = e.data.get(field)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+                by_day[as_utc(e.timestamp).astimezone(tz).date()] = v
+        points = []
+        for d, v in sorted(by_day.items()):
+            if d < since_date:
+                continue
+            age = _age_on(profile, d)
+            if age is None or age < 0:
+                continue
+            z = growth_z(metric, age, sex, v / factor)
+            if z is None:
+                continue
+            points.append({"date": d.isoformat(), "value": v, "percentile": round(z_to_percentile(z), 1)})
+        if points:
+            out[field] = points
+    return out
+
+
 @router.get("/stats/{key}")
 def stats(
     key: str,
@@ -1304,6 +1389,10 @@ def stats(
 
     day_dicts = [e for e in entries if e["date"] >= since_date.isoformat()]
 
+    growth_percentiles: dict[str, list[dict]] = {}
+    if ct.key in ("weight", "height") and sex in ("boy", "girl"):
+        growth_percentiles = _growth_percentiles(db, profile, sex, tz, since_date)
+
     extra = ct.stats_extra(in_range, tz, profile)
     for rate in extra.get("growth_rate", []):
         age = _age_days(profile, datetime.fromisoformat(rate["timestamp"]).astimezone(tz))
@@ -1328,6 +1417,7 @@ def stats(
         # the UI can ask for a birth date when it's the only thing missing
         "has_guidance": any(reference_range(ct.key, n, 30, sex) for n in ["count", *numeric_fields]),
         "forecast_days": forecast_days,
+        "growth_percentiles": growth_percentiles,
         "forecast": forecast,
         "references": references,
         "latest": latest,

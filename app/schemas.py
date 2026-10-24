@@ -78,6 +78,8 @@ class StatusOut(BaseModel):
     # true when next_due was set by hand for this cycle rather than derived
     # from the interval
     next_due_overridden: bool = False
+    # usual local time (HH:MM) of a once-a-day routine; next_due follows it
+    habit_time: Optional[str] = None
     reminder_enabled: bool = True
     interval_minutes: Optional[int] = None
     overdue: bool = False

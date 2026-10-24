@@ -244,6 +244,16 @@ const I18N = {
     "By category": "За категоріями",
     "Per person and total": "По людях і разом",
     "Total": "Разом",
+    "Growth percentile (WHO)": "Перцентиль росту (ВООЗ)",
+    "Where the baby sits among peers of the same age and sex; P50 is average, the shaded band is P15-P85.": "Де малюк серед однолітків такої ж статі; P50 - середнє значення, затінена смуга - P15-P85.",
+    "Diaper": "Підгузок",
+    "No diaper change logged lately": "Підгузок давно не записано",
+    "Was it changed?": "Його міняли?",
+    "Wet": "Мокрий",
+    "Dirty": "Брудний",
+    "Clean / dry": "Чистий / сухий",
+    "never": "ніколи",
+    "Diaper change logged": "Зміну підгузка записано",
     "Breastfeedings": "Годування грудьми",
     "Yes, end sleep": "Так, завершити сон",
     "No, keep sleeping": "Ні, ще спить",
@@ -621,7 +631,7 @@ async function loadDashboard() {
 
     let dueText = "";
     let dueClass = "ok";
-    const hasReminder = s.interval_minutes != null || (ct && ct.daily_reminder);
+    const hasReminder = s.interval_minutes != null || (ct && ct.daily_reminder) || !!s.habit_time;
     if (!s.reminder_enabled) {
       // switched off in Settings - say so (only for chores that have a
       // reminder to switch off), rather than silently showing nothing
@@ -629,7 +639,7 @@ async function loadDashboard() {
         dueText = `🔕 ${t("Reminder off")}`;
         dueClass = "off";
       }
-    } else if (ct && ct.daily_reminder && s.last_event && !s.next_due_overridden) {
+    } else if (ct && ct.daily_reminder && s.last_event && !s.next_due_overridden && !s.habit_time) {
       // "once per day" reminders reset at local midnight, not 24h after the
       // last dose - a live countdown-to-midnight isn't meaningful, so show
       // "Tomorrow" once satisfied, or an overdue-by based on the last dose
@@ -649,10 +659,11 @@ async function loadDashboard() {
       dueText = `${s.overdue ? t("Overdue by") : t("Next")} ${fmtRelative(s.next_due, "in", true)} (${fmtClockTime(s.next_due)})`;
     }
     if (s.next_due_overridden && s.reminder_enabled) dueText += " ✎";
+    else if (s.habit_time && s.reminder_enabled && s.next_due) dueText += ` 🕘`; // follows the usual time of day
     // "Set alarm" - only for a real future due time (a plain interval-based
     // reminder, not the daily-reset kind, and not already overdue - there's
     // nothing to count down to at that point).
-    const showAlarm = s.next_due && !s.overdue && !(ct && ct.daily_reminder && !s.next_due_overridden);
+    const showAlarm = s.next_due && !s.overdue && !(ct && ct.daily_reminder && !s.next_due_overridden && !s.habit_time);
     // "Change next time" - whenever there's a live reminder to adjust
     const showEditDue = s.reminder_enabled && hasReminder;
     const dueHtml = dueText
@@ -993,7 +1004,9 @@ function askModal(title, text, buttons) {
   });
 }
 
-const AMOUNT_PROMPT_AFTER_MIN = 15;
+const DIAPER_ASK_AFTER_MIN = 120;
+const AMOUNT_PROMPT_AFTER_MIN = 10;
+let amountFirstCheck = true; // first dashboard load of this page view
 const askedRecently = {}; // question key -> time it was answered "no" / dismissed
 const amountDismissed = new Set(); // feeding event ids whose auto-popup was dismissed
 
@@ -1053,12 +1066,17 @@ async function promptFeedAmount(ev) {
 // logged without any amount, ask once (until dismissed).
 let askBusy = false;
 async function maybePromptMissingAmount(statuses) {
+  const wasFirst = amountFirstCheck;
+  amountFirstCheck = false;
   if (askBusy || !document.getElementById("modal-backdrop").classList.contains("hidden")) return;
   const s = statuses.find((x) => x.chore_type === "feeding");
   const ev = feedingMissingAmount(s);
   if (!ev || amountDismissed.has(ev.id)) return;
   const stamps = [ev.timestamp, ...(ev.data.entries || []).map((e) => e.timestamp)].map((x) => new Date(x).getTime()).filter(Boolean);
-  if (Date.now() - Math.max(...stamps) < AMOUNT_PROMPT_AFTER_MIN * 60000) return;
+  // right after a page (re)load ask straight away; while the page stays open,
+  // give it AMOUNT_PROMPT_AFTER_MIN minutes before asking
+  const immediate = wasFirst;
+  if (!immediate && Date.now() - Math.max(...stamps) < AMOUNT_PROMPT_AFTER_MIN * 60000) return;
   askBusy = true;
   try {
     if (await promptFeedAmount(ev)) refreshCurrentView();
@@ -1088,6 +1106,37 @@ async function preFeedChecks() {
   try {
     const prev = feedingMissingAmount(by("feeding"));
     if (prev && (await promptFeedAmount(prev))) refreshCurrentView();
+
+    // no diaper logged lately: was it changed? (a feeding is a good moment to notice)
+    const dia = by("diaper");
+    if (dia && !recentlyAsked("diaper", 1)) {
+      const mins = dia.last_event ? (Date.now() - new Date(dia.last_event.timestamp).getTime()) / 60000 : Infinity;
+      if (mins > DIAPER_ASK_AFTER_MIN) {
+        const since = dia.last_event ? fmtRelative(dia.last_event.timestamp) : t("never");
+        const ans = await askModal(
+          t("Diaper"),
+          `${t("No diaper change logged lately")} (${since}). ${t("Was it changed?")}`,
+          [
+            { label: `💧 ${t("Wet")}`, value: "wet" },
+            { label: `💩 ${t("Dirty")}`, value: "dirty" },
+            { label: `💧💩 ${t("Both")}`, value: "both" },
+            { label: t("Clean / dry"), value: "dry" },
+            { label: t("No"), value: false },
+          ]
+        );
+        if (ans) {
+          const data = { wet: { pee: true, poop: false }, dirty: { pee: false, poop: true }, both: { pee: true, poop: true }, dry: { pee: false, poop: false } }[ans];
+          await api("/api/events", {
+            method: "POST",
+            body: JSON.stringify({ chore_type: "diaper", data, person_id: currentPersonId() }),
+          });
+          toast(t("Diaper change logged"));
+          refreshCurrentView();
+        } else {
+          askedRecently.diaper = Date.now();
+        }
+      }
+    }
 
     const pro = by("probiotic");
     if (pro && pro.last_event && !recentlyAsked("probiotic", 3)) {
@@ -2910,6 +2959,64 @@ function aheadTableHtml(data, ct, metrics) {
     </div>`;
 }
 
+// Weight and height WHO percentiles over time on one chart (shown on both pages).
+function percentileChartEl(data) {
+  const gp = data.growth_percentiles || {};
+  const series = [
+    { key: "weight_g", label: t("Weight"), color: "var(--primary)" },
+    { key: "height_cm", label: t("Height"), color: "var(--ok)" },
+  ].filter((s) => gp[s.key] && gp[s.key].length);
+  if (!series.length) return null;
+
+  const all = series.flatMap((s) => gp[s.key]);
+  const dayMs = 86400000;
+  const minT = Math.min(...all.map((p) => new Date(p.date).getTime()));
+  const maxT = Math.max(...all.map((p) => new Date(p.date).getTime()), minT + dayMs);
+  const spanDays = (maxT - minT) / dayMs;
+  const h = 220;
+  const padL = 34;
+  const padR = 14;
+  const padT = 14;
+  const padB = 28;
+  const w = Math.max(360, Math.round(spanDays * (spanDays <= 60 ? 12 : 5)) + padL + padR);
+  const plotW = w - padL - padR;
+  const plotH = h - padT - padB;
+  const x = (iso) => padL + ((new Date(iso).getTime() - minT) / (maxT - minT)) * plotW;
+  const y = (p) => padT + plotH - (Math.max(0, Math.min(100, p)) / 100) * plotH;
+
+  let svg = "";
+  [3, 15, 50, 85, 97].forEach((p) => {
+    const mid = p === 50;
+    svg += `<line x1="${padL}" x2="${w - padR}" y1="${y(p)}" y2="${y(p)}" stroke="currentColor" stroke-width="1" ${mid ? "" : 'stroke-dasharray="3 4"'} opacity="${mid ? 0.35 : 0.2}"></line>`;
+    svg += `<text x="${padL - 5}" y="${y(p) + 3}" font-size="10" text-anchor="end" fill="currentColor" opacity="0.65">P${p}</text>`;
+  });
+  svg += `<rect x="${padL}" y="${y(85)}" width="${plotW}" height="${y(15) - y(85)}" fill="var(--ok)" opacity="0.08"></rect>`;
+  series.forEach((s) => {
+    const pts = gp[s.key];
+    svg += `<path d="${pts.map((p, i) => `${i ? "L" : "M"}${x(p.date).toFixed(1)},${y(p.percentile).toFixed(1)}`).join(" ")}" fill="none" stroke="${s.color}" stroke-width="2.2"></path>`;
+    pts.forEach((p, i) => {
+      svg += `<circle cx="${x(p.date).toFixed(1)}" cy="${y(p.percentile).toFixed(1)}" r="3.2" fill="${s.color}"><title>${s.label} ${fmtShortDate(p.date)}: P${Math.round(p.percentile)}</title></circle>`;
+      if (i === pts.length - 1) {
+        svg += `<text x="${Math.min(x(p.date), w - padR - 14).toFixed(1)}" y="${(y(p.percentile) - 8).toFixed(1)}" font-size="10" font-weight="600" text-anchor="middle" fill="${s.color}">P${Math.round(p.percentile)}</text>`;
+      }
+    });
+  });
+  const ticks = Math.min(6, Math.max(1, Math.round(spanDays / 7)));
+  for (let i = 0; i <= ticks; i++) {
+    const tm = new Date(minT + ((maxT - minT) * i) / ticks);
+    const iso = tm.toISOString().slice(0, 10);
+    svg += `<text x="${x(iso).toFixed(1)}" y="${h - 8}" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.6">${fmtShortDate(iso)}</text>`;
+  }
+
+  const el = document.createElement("div");
+  el.className = "chart-block";
+  el.innerHTML = `<h3>${t("Growth percentile (WHO)")}</h3>
+    <div class="chart-legend">${series.map((s) => `<span><i class="dot" style="background:${s.color}"></i>${s.label}</span>`).join("")}</div>
+    <svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="color:inherit">${svg}</svg>
+    <div class="chart-ref-note">${t("Where the baby sits among peers of the same age and sex; P50 is average, the shaded band is P15-P85.")}</div>`;
+  return el;
+}
+
 async function loadStats(explicitKey) {
   const s = state.stats;
   if (explicitKey) s.key = explicitKey;
@@ -2985,6 +3092,12 @@ async function loadStats(explicitKey) {
       drawn++;
     }
   });
+
+  const pctChart = percentileChartEl(data);
+  if (pctChart) {
+    charts.insertBefore(pctChart, charts.firstChild);
+    drawn++;
+  }
 
   if (data.growth_rate && data.growth_rate.length) {
     const points = data.growth_rate.map((r) => ({ date: r.date, value: r.g_per_day, refMin: r.ref_min, refMax: r.ref_max }));
