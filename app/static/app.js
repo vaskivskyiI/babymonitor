@@ -244,6 +244,9 @@ const I18N = {
     "By category": "За категоріями",
     "Per person and total": "По людях і разом",
     "Total": "Разом",
+    "Yes, log it now": "Так, записати зараз",
+    "Not yet": "Ще ні",
+    "logged": "записано",
     "Sleep per day": "Сон за добу",
     "typical": "типово",
     "Average awake window": "Середнє вікно неспання",
@@ -1052,9 +1055,74 @@ async function confirmSleepOpen(choreTypeKey) {
 }
 
 // Everything to settle before a NEW event of this type is recorded.
+// Items done once a day (probiotic, bath, ... - schedule "once per calendar
+// day" or a single aimed time): when something else is being logged around the
+// time such an item is usually done and it isn't logged today, ask about it.
+const USUAL_BEFORE_MIN = 45;
+const USUAL_AFTER_MIN = 150;
+let usualStatuses = null;
+
+function minutesNow() {
+  const n = new Date();
+  return n.getHours() * 60 + n.getMinutes();
+}
+
+// signed distance in minutes from "usual" to now, across midnight
+function minutesPastUsual(usual) {
+  const [h, m] = usual.split(":").map(Number);
+  let diff = minutesNow() - (h * 60 + m);
+  if (diff > 720) diff -= 1440;
+  if (diff < -720) diff += 1440;
+  return diff;
+}
+
+async function askDailyDue(excludeKey) {
+  let statuses;
+  try {
+    statuses = await api("/api/status");
+  } catch (err) {
+    return;
+  }
+  usualStatuses = statuses;
+  for (const s of statuses) {
+    if (s.chore_type === excludeKey || !s.usual_time || s.done_today || !s.reminder_enabled) continue;
+    const ct = choreType(s.chore_type);
+    if (!ct || ct.has_start_end) continue;
+    const diff = minutesPastUsual(s.usual_time);
+    if (diff < -USUAL_BEFORE_MIN || diff > USUAL_AFTER_MIN) continue;
+    const key = `daily:${s.chore_type}`;
+    if (askedRecently[key] && Date.now() - askedRecently[key] < 2 * 3600000) continue;
+    const name = `${s.icon} ${t(s.label)}`;
+    const text =
+      state.lang === "uk"
+        ? `${name} зазвичай відбувається близько ${s.usual_time}, а сьогодні ще не записано. Записати зараз?`
+        : `${name} is usually done around ${s.usual_time} and isn't logged today. Log it now?`;
+    const ans = await askModal(name, text, [
+      { label: t("Yes, log it now"), value: true, primary: true },
+      { label: t("Not yet"), value: false },
+    ]);
+    if (ans) {
+      try {
+        await api("/api/events", {
+          method: "POST",
+          body: JSON.stringify({ chore_type: s.chore_type, data: {}, person_id: currentPersonId() }),
+        });
+        toast(`${name} ${t("logged")}`);
+        refreshCurrentView();
+      } catch (err) {
+        toast(t("Error: ") + err.message);
+      }
+    } else {
+      askedRecently[key] = Date.now();
+    }
+  }
+}
+
 async function confirmNewEvent(choreTypeKey) {
   if (!(await confirmNotDuplicate(choreTypeKey))) return false;
-  return confirmSleepOpen(choreTypeKey);
+  if (!(await confirmSleepOpen(choreTypeKey))) return false;
+  await askDailyDue(choreTypeKey);
+  return true;
 }
 
 // ---------- follow-up questions around feeding ----------
@@ -1219,8 +1287,9 @@ async function preFeedChecks() {
       }
     }
 
+    const learned = (k) => usualStatuses && usualStatuses.find((x) => x.chore_type === k && x.usual_time);
     const pro = by("probiotic");
-    if (pro && pro.last_event && !recentlyAsked("probiotic", 3)) {
+    if (pro && pro.last_event && !learned("probiotic") && !recentlyAsked("probiotic", 3)) {
       const hours = (Date.now() - new Date(pro.last_event.timestamp).getTime()) / 3600000;
       if (hours > 24) {
         const ans = await askModal(
@@ -1246,7 +1315,7 @@ async function preFeedChecks() {
 
     const bath = by("bath");
     const now = new Date();
-    if (bath && now.getHours() >= 20 && !recentlyAsked("bath", 3)) {
+    if (bath && now.getHours() >= 20 && !learned("bath") && !recentlyAsked("bath", 3)) {
       const bathedToday = bath.last_event && localDay(new Date(bath.last_event.timestamp)) === localDay(now);
       if (!bathedToday) {
         const ans = await askModal(

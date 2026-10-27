@@ -91,6 +91,9 @@ class StatusOut(BaseModel):
     schedule: dict = {}
     slots_today: list = []
     extra: dict = {}
+    # once-a-day items: when it is usually done (HH:MM, learned) and whether it was today
+    usual_time: Optional[str] = None
+    done_today: bool = False
 
 
 class CompetitionWeightsUpdate(BaseModel):

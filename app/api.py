@@ -1,5 +1,6 @@
 import copy
 from collections import Counter, defaultdict
+import math
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -187,6 +188,38 @@ def _schedule_for(db: Session, ct) -> dict:
     if s and s.value and s.value.get("mode"):
         return sched.normalize(s.value)
     return sched.from_legacy(_interval_minutes(db, ct), ct.daily_reminder)
+
+
+USUAL_DAYS = 14  # history used to learn when a once-a-day item is usually done
+USUAL_MIN_DAYS = 3
+
+
+def _once_a_day(schedule: dict) -> bool:
+    """Items done once per calendar day: that mode, or a single aimed time every day."""
+    return schedule.get("mode") == "calendar_day" or (
+        schedule.get("mode") == "times" and schedule.get("every_days", 1) == 1 and len(schedule.get("times", [])) == 1
+    )
+
+
+def _usual_minute(db: Session, ct, tz: ZoneInfo) -> int | None:
+    """Minute of the local day this once-a-day item is usually logged, from the
+    last two weeks (circular mean - 23:50 and 00:10 average to midnight), or
+    None while there are too few days or the times are all over the clock."""
+    since = _now() - timedelta(days=USUAL_DAYS)
+    first_of_day: dict[date, int] = {}
+    for (ts,) in db.execute(
+        select(Event.timestamp).where(Event.chore_type == ct.key, Event.timestamp >= since).order_by(Event.timestamp)
+    ):
+        local = as_utc(ts).astimezone(tz)
+        first_of_day.setdefault(local.date(), local.hour * 60 + local.minute)
+    if len(first_of_day) < USUAL_MIN_DAYS:
+        return None
+    angles = [2 * math.pi * m / 1440 for m in first_of_day.values()]
+    x = sum(math.cos(a) for a in angles) / len(angles)
+    y = sum(math.sin(a) for a in angles) / len(angles)
+    if math.hypot(x, y) < 0.5:
+        return None
+    return round(math.atan2(y, x) / (2 * math.pi) * 1440) % 1440
 
 
 def _schedule_interval(schedule: dict) -> int | None:
@@ -916,6 +949,14 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
         ).scalars().all()
         slots_today = sched.slots_today(schedule, [as_utc(x) for x in stamps], _now(), tz)
 
+    usual_time = None
+    done_today = False
+    if _once_a_day(schedule):
+        done_today = bool(last_out and last_out.timestamp.astimezone(tz).date() == _now().astimezone(tz).date())
+        um = _usual_minute(db, ct, tz)
+        if um is not None:
+            usual_time = f"{um // 60:02d}:{um % 60:02d}"
+
     extra: dict = {}
     if ct.wants_status_extra:
         recent = db.execute(
@@ -940,6 +981,8 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
         schedule=schedule,
         slots_today=slots_today,
         extra=extra,
+        usual_time=usual_time,
+        done_today=done_today,
     )
 
 
