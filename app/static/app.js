@@ -2819,7 +2819,7 @@ function renderTypeCards() {
             ${pushOn ? `<div class="push-sched" data-key="${ct.key}">${pushScheduleText(ct)}</div>` : ""}
           </div>
         </section>
-        <section class="ct-sec">
+        <section class="ct-sec ct-nudge">
           <h4>💬 ${t("Ask when logging something else around the usual time")}</h4>
           <div class="muted ct-hint">${t("For items done once a day: when you log anything else near the time it is usually done and it is not logged yet today, ask about it.")}</div>
           <label class="switch-label"><input type="checkbox" class="nudge-on" ${nudge.enabled ? "checked" : ""}> ${t("Ask")}</label>
@@ -2866,6 +2866,16 @@ function renderTypeCards() {
 
     // reminder
     const editor = mountScheduleEditor(card.querySelector(".sched-wrap"), ct.schedule);
+    // only meaningful for items done once a day: follow the schedule being edited
+    const nudgeSec = card.querySelector(".ct-nudge");
+    const syncNudge = () => {
+      const sch = editor.get();
+      const onceADay = !!sch && (sch.mode === "calendar_day" || (sch.mode === "times" && sch.every_days === 1 && sch.times.length === 1));
+      nudgeSec.style.display = onceADay ? "" : "none";
+    };
+    const schedWrap = card.querySelector(".sched-wrap");
+    ["change", "input", "click"].forEach((ev) => schedWrap.addEventListener(ev, syncNudge));
+    syncNudge();
     const reminderToggle = card.querySelector(".reminder-toggle");
     reminderToggle.addEventListener("change", async () => {
       try {
