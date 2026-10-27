@@ -93,6 +93,8 @@ class StatusOut(BaseModel):
     extra: dict = {}
     # once-a-day items: when it is usually done (HH:MM, learned) and whether it was today
     usual_time: Optional[str] = None
+    usual_before: int = 45
+    usual_after: int = 150
     done_today: bool = False
 
 
@@ -176,6 +178,12 @@ class CustomFieldIn(BaseModel):
     unit: Optional[str] = None
     numeric_stat: bool = False
     options: Optional[list[dict]] = None  # [{value,label}]
+
+
+class NudgeUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    before_minutes: Optional[int] = Field(default=None, ge=0, le=720)
+    after_minutes: Optional[int] = Field(default=None, ge=0, le=720)
 
 
 class ScheduleUpdate(BaseModel):

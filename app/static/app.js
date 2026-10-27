@@ -244,6 +244,19 @@ const I18N = {
     "By category": "За категоріями",
     "Per person and total": "По людях і разом",
     "Total": "Разом",
+    "Move up": "Вгору",
+    "Move down": "Вниз",
+    "Show on the dashboard": "Показувати на панелі",
+    "Reminder on": "Нагадування увімкнено",
+    "Push to this device": "Push на цей пристрій",
+    "Ask when logging something else around the usual time": "Питати, коли записую щось інше приблизно в звичний час",
+    "For items done once a day: when you log anything else near the time it is usually done and it is not logged yet today, ask about it.": "Для справ раз на добу: коли записуєте щось інше поблизу звичного часу, а цього ще не записано сьогодні, запитати про це.",
+    "Ask": "Питати",
+    "min before": "хв до",
+    "min after the usual time": "хв після звичного часу",
+    "How long after the last checkpoint new ones still join the same entry.": "Скільки після останньої контрольної точки нові ще додаються до того ж запису.",
+    "Name, fields and quick actions": "Назва, поля та швидкі дії",
+    "Which categories count, and how hard each is (points multiplier). Applies to everyone, on every device.": "Які категорії враховуються і наскільки вони складні (множник балів). Для всіх, на всіх пристроях.",
     "Yes, log it now": "Так, записати зараз",
     "Not yet": "Ще ні",
     "logged": "записано",
@@ -336,7 +349,7 @@ const I18N = {
     "Which categories count": "Які категорії враховуються",
     "Show all": "Показати все",
     "Applies to everyone, on every device. Categories switched off are left out of the standings and points too.": "Діє для всіх і на всіх пристроях. Вимкнені категорії не враховуються в таблиці й очках.",
-    "Every category is switched off - turn some on in Settings → Competition.": "Усі категорії вимкнено - увімкніть щось у Налаштування → Змагання.",
+    "Every category is switched off - turn some on in Settings → Chore types.": "Усі категорії вимкнено - увімкніть щось у Налаштування → Змагання.",
     "{n} categories switched off in the competition - change in Settings": "{n} категорій вимкнено в змаганні - змінити в Налаштуваннях",
     "Nothing logged in this period yet.": "За цей період ще нічого не записано.",
     "Nothing contested in this period yet - it takes two people logging the same thing.": "За цей період ще немає змагання - потрібно, щоб двоє людей записували те саме.",
@@ -1058,8 +1071,6 @@ async function confirmSleepOpen(choreTypeKey) {
 // Items done once a day (probiotic, bath, ... - schedule "once per calendar
 // day" or a single aimed time): when something else is being logged around the
 // time such an item is usually done and it isn't logged today, ask about it.
-const USUAL_BEFORE_MIN = 45;
-const USUAL_AFTER_MIN = 150;
 let usualStatuses = null;
 
 function minutesNow() {
@@ -1089,7 +1100,7 @@ async function askDailyDue(excludeKey) {
     const ct = choreType(s.chore_type);
     if (!ct || ct.has_start_end) continue;
     const diff = minutesPastUsual(s.usual_time);
-    if (diff < -USUAL_BEFORE_MIN || diff > USUAL_AFTER_MIN) continue;
+    if (diff < -(s.usual_before ?? 45) || diff > (s.usual_after ?? 150)) continue;
     const key = `daily:${s.chore_type}`;
     if (askedRecently[key] && Date.now() - askedRecently[key] < 2 * 3600000) continue;
     const name = `${s.icon} ${t(s.label)}`;
@@ -2542,7 +2553,7 @@ function renderCompetition() {
     ? `<button type="button" class="comp-hidden-note" id="comp-hidden-note">⚙ ${t("{n} categories switched off in the competition - change in Settings").replace("{n}", hiddenCount)}</button>`
     : "";
   if (boards.every((b) => b.hidden)) {
-    box.innerHTML = `${note}<p class="muted-note">${t("Every category is switched off - turn some on in Settings → Competition.")}</p>`;
+    box.innerHTML = `${note}<p class="muted-note">${t("Every category is switched off - turn some on in Settings → Chore types.")}</p>`;
   } else {
     box.innerHTML = note + standingsHtml(data, c.period) + leadersTableHtml(data, c.period) + totalsTableHtml(data, c.period) + categoryCardsHtml(data, c.period);
   }
@@ -2550,7 +2561,7 @@ function renderCompetition() {
   if (noteBtn) {
     noteBtn.addEventListener("click", () => {
       document.querySelector('[data-tab="settings"]').click();
-      setTimeout(() => document.getElementById("competition-config").scrollIntoView({ behavior: "smooth", block: "start" }), 400);
+      setTimeout(() => document.getElementById("chore-types-manager").scrollIntoView({ behavior: "smooth", block: "start" }), 400);
     });
   }
 }
@@ -2743,65 +2754,259 @@ function categoryCardsHtml(data, period) {
 
 // ----- choose what's shown -----
 
-function renderCompetitionConfig() {
-  const c = state.competition;
-  const el = document.getElementById("competition-config");
-  const data = c.data;
-  if (!data) return;
-  el.innerHTML = `
-    <div class="comp-config-head">
-      <strong>${t("Which categories count")}</strong>
-      <button type="button" class="btn secondary" id="comp-show-all">${t("Show all")}</button>
-    </div>
-    <div class="comp-config-note">${t("Applies to everyone, on every device. Categories switched off are left out of the standings and points too.")}</div>
-    ${data.chore_types
-      .map((ct) => {
-        const hiddenN = ct.boards.filter((b) => c.hidden.has(b.id)).length;
-        return `<div class="cfg-cat">
-          <label class="switch-label"><input type="checkbox" class="cfg-cat-box" data-cat="${ct.key}" ${hiddenN < ct.boards.length ? "checked" : ""}>
-            <strong>${ct.icon} ${t(ct.label)}</strong></label>
-          <div class="cfg-boards">${ct.boards
-            .map(
-              (b) => `<span class="cfg-board-wrap"><label class="cfg-board"><input type="checkbox" data-board="${b.id}" ${c.hidden.has(b.id) ? "" : "checked"}> ${t(b.label)}${b.unit && b.display !== "duration" ? ` <span class="muted">(${esc(b.unit)})</span>` : ""}</label><label class="cfg-weight" title="${t("Difficulty (points multiplier)")}">×<input type="number" min="0" max="20" step="0.5" inputmode="decimal" data-weight="${b.id}" data-default="${b.default_weight}" value="${b.weight}"></label></span>`
-            )
-            .join("")}</div>
-        </div>`;
-      })
-      .join("")}`;
+// ---------- Settings: one card per chore type ----------
+//
+// Everything about a chore type lives in its card: whether it is shown and in
+// what order, its reminder schedule and push, the "usually done about now"
+// question, the session window, which competition categories count (and how
+// hard they are), and renaming / fields / quick actions / deleting.
 
-  el.querySelectorAll(".cfg-cat-box").forEach((box) => {
-    const ct = data.chore_types.find((x) => x.key === box.dataset.cat);
-    const hiddenN = ct.boards.filter((b) => c.hidden.has(b.id)).length;
-    box.indeterminate = hiddenN > 0 && hiddenN < ct.boards.length; // some, not all, boards shown
-    box.addEventListener("change", () => {
-      const ids = ct.boards.map((b) => b.id);
-      if (box.checked) updateCompHidden([], ids);
-      else updateCompHidden(ids, []);
+const openCards = new Set(); // keys of cards left expanded across re-renders
+
+async function loadChoreTypesManager() {
+  state.allTypes = await api("/api/chore-types?include_disabled=true");
+  renderTypeCards();
+}
+
+function renderReminderRows() {
+  renderTypeCards();
+}
+
+function cardSummary(ct) {
+  const bits = [ct.reminder_enabled === false ? `🔕 ${t("Reminder off")}` : scheduleSummary(ct.schedule)];
+  const c = state.competition && state.competition.data && state.competition.data.chore_types.find((x) => x.key === ct.key);
+  if (c && c.boards.length) {
+    const on = c.boards.filter((b) => !state.competition.hidden.has(b.id)).length;
+    bits.push(`🏆 ${on}/${c.boards.length}`);
+  }
+  return bits.join(" · ");
+}
+
+function renderTypeCards() {
+  const box = document.getElementById("chore-types-manager");
+  if (!box) return;
+  const types = state.allTypes || [];
+  box.innerHTML = "";
+  const pushOn = !!(state.push && state.push.subscribed);
+  const muted = new Set((state.push && state.push.muted_types) || []);
+
+  types.forEach((ct, i) => {
+    const nudge = ct.nudge || { enabled: true, before_minutes: 45, after_minutes: 150 };
+    const card = document.createElement("div");
+    card.className = `ct-card ${ct.enabled ? "" : "disabled"} ${openCards.has(ct.key) ? "open" : ""}`;
+    card.dataset.key = ct.key;
+    card.innerHTML = `
+      <div class="ct-card-head">
+        <div class="ct-manage-order">
+          <button type="button" class="icon-btn" data-move="up" ${i === 0 ? "disabled" : ""} title="${t("Move up")}">▲</button>
+          <button type="button" class="icon-btn" data-move="down" ${i === types.length - 1 ? "disabled" : ""} title="${t("Move down")}">▼</button>
+        </div>
+        <button type="button" class="ct-card-title">
+          <span class="ct-name">${ct.icon} <strong>${esc(t(ct.label))}</strong>${ct.is_builtin ? "" : ` <span class="custom-pill">${t("custom")}</span>`}</span>
+          <span class="ct-sum muted">${cardSummary(ct)}</span>
+        </button>
+        <label class="switch" title="${t("Show on the dashboard")}"><input type="checkbox" class="ct-enabled-toggle" ${ct.enabled ? "checked" : ""}><span class="slider"></span></label>
+        <span class="ct-caret">▾</span>
+      </div>
+      <div class="ct-card-body">
+        <section class="ct-sec">
+          <h4>⏰ ${t("Reminder")}</h4>
+          <label class="switch-label"><input type="checkbox" class="reminder-toggle" ${ct.reminder_enabled ? "checked" : ""}> ${t("Reminder on")}</label>
+          <div class="reminder-controls ${ct.reminder_enabled ? "" : "dimmed"}">
+            <div class="sched-wrap">${scheduleEditorHtml()}</div>
+            <label>${t("Notify")} <input type="number" min="0" max="1440" class="lead-input" style="width:72px" value="${ct.push_lead_minutes || 0}"> ${t("min before due")}</label>
+            ${pushOn ? `<label class="switch-label push-toggle"><input type="checkbox" ${muted.has(ct.key) ? "" : "checked"}> 🔔 ${t("Push to this device")}</label>` : ""}
+            ${pushOn ? `<div class="push-sched" data-key="${ct.key}">${pushScheduleText(ct)}</div>` : ""}
+          </div>
+        </section>
+        <section class="ct-sec">
+          <h4>💬 ${t("Ask when logging something else around the usual time")}</h4>
+          <div class="muted ct-hint">${t("For items done once a day: when you log anything else near the time it is usually done and it is not logged yet today, ask about it.")}</div>
+          <label class="switch-label"><input type="checkbox" class="nudge-on" ${nudge.enabled ? "checked" : ""}> ${t("Ask")}</label>
+          <div class="row nudge-win">
+            <label><input type="number" min="0" max="720" class="nudge-before" style="width:72px" value="${nudge.before_minutes}"> ${t("min before")}</label>
+            <label><input type="number" min="0" max="720" class="nudge-after" style="width:72px" value="${nudge.after_minutes}"> ${t("min after the usual time")}</label>
+          </div>
+        </section>
+        ${
+          ct.session_window_configurable
+            ? `<section class="ct-sec"><h4>🕒 ${t("Session window")}</h4>
+                <div class="muted ct-hint">${t("How long after the last checkpoint new ones still join the same entry.")}</div>
+                <label><input type="number" min="0" class="session-window-input" style="width:92px" value="${ct.session_window_minutes ?? ""}"> ${t("min")}</label></section>`
+            : ""
+        }
+        <div class="ct-save-row"><button type="button" class="btn save-settings-btn">${t("Save")}</button></div>
+        <section class="ct-sec ct-comp"></section>
+        <section class="ct-sec">
+          <h4>✏️ ${t("Name, fields and quick actions")}</h4>
+          <div class="row">
+            <button type="button" class="btn secondary ct-edit-btn">${t("Edit")}</button>
+            ${ct.is_builtin ? "" : `<button type="button" class="btn danger ct-delete-btn">${t("Delete")}</button>`}
+          </div>
+        </section>
+      </div>`;
+
+    // open / close
+    card.querySelector(".ct-card-title").addEventListener("click", () => {
+      card.classList.toggle("open");
+      if (card.classList.contains("open")) openCards.add(ct.key);
+      else openCards.delete(ct.key);
     });
-  });
-  el.querySelectorAll("[data-board]").forEach((box) => {
-    box.addEventListener("change", () => {
-      if (box.checked) updateCompHidden([], [box.dataset.board]);
-      else updateCompHidden([box.dataset.board], []);
+    card.querySelector(".ct-caret").addEventListener("click", () => card.querySelector(".ct-card-title").click());
+    // order
+    card.querySelector('[data-move="up"]').addEventListener("click", () => moveChoreType(types, i, -1));
+    card.querySelector('[data-move="down"]').addEventListener("click", () => moveChoreType(types, i, 1));
+    // shown on the dashboard
+    card.querySelector(".ct-enabled-toggle").addEventListener("change", async (e) => {
+      await api(`/api/chore-types/${ct.key}/meta`, { method: "PUT", body: JSON.stringify({ enabled: e.target.checked }) });
+      await loadChoreTypes();
+      await loadChoreTypesManager();
+      loadDashboard();
     });
-  });
-  el.querySelectorAll("[data-weight]").forEach((inp) => {
-    inp.addEventListener("change", async () => {
-      const raw = inp.value.trim();
-      const w = raw === "" ? null : Math.max(0, Number(raw));
+
+    // reminder
+    const editor = mountScheduleEditor(card.querySelector(".sched-wrap"), ct.schedule);
+    const reminderToggle = card.querySelector(".reminder-toggle");
+    reminderToggle.addEventListener("change", async () => {
       try {
-        await api("/api/competition/weights", {
+        await api(`/api/chore-types/${ct.key}/settings`, { method: "PUT", body: JSON.stringify({ reminder_enabled: reminderToggle.checked }) });
+      } catch (err) {
+        reminderToggle.checked = !reminderToggle.checked;
+        toast(t("Error: ") + err.message);
+        return;
+      }
+      card.querySelector(".reminder-controls").classList.toggle("dimmed", !reminderToggle.checked);
+      toast("Saved");
+      ct.reminder_enabled = reminderToggle.checked;
+      card.querySelector(".ct-sum").textContent = cardSummary(ct);
+      await loadChoreTypes();
+      loadDashboard();
+      refreshPushStatus();
+    });
+
+    // one Save for schedule + push lead + nudge + session window
+    card.querySelector(".save-settings-btn").addEventListener("click", async () => {
+      const schedule = editor.get();
+      if (!schedule) {
+        toast(t("Error: ") + t("Fill in the interval or add at least one time"));
+        return;
+      }
+      const sessionInput = card.querySelector(".session-window-input");
+      const leadInput = card.querySelector(".lead-input");
+      const body = { push_lead_minutes: leadInput.value !== "" ? Math.max(0, Number(leadInput.value)) : 0 };
+      if (sessionInput) body.session_window_minutes = sessionInput.value !== "" ? Number(sessionInput.value) : null;
+      const num = (el, d) => (el.value === "" ? d : Math.max(0, Math.min(720, Number(el.value))));
+      try {
+        await api(`/api/chore-types/${ct.key}/schedule`, { method: "PUT", body: JSON.stringify(schedule) });
+        await api(`/api/chore-types/${ct.key}/settings`, { method: "PUT", body: JSON.stringify(body) });
+        await api(`/api/chore-types/${ct.key}/nudge`, {
           method: "PUT",
-          body: JSON.stringify({ weights: { [inp.dataset.weight]: w === Number(inp.dataset.default) ? null : w } }),
+          body: JSON.stringify({
+            enabled: card.querySelector(".nudge-on").checked,
+            before_minutes: num(card.querySelector(".nudge-before"), 45),
+            after_minutes: num(card.querySelector(".nudge-after"), 150),
+          }),
         });
-        await fetchCompetitionData();
-        refreshCompetitionViews();
       } catch (err) {
         toast(t("Error: ") + err.message);
+        return;
       }
+      toast("Saved");
+      await loadChoreTypes();
+      await loadChoreTypesManager();
+      loadDashboard();
+      refreshPushStatus();
     });
+
+    // push for this device
+    const pushToggle = card.querySelector(".push-toggle input");
+    if (pushToggle) {
+      pushToggle.addEventListener("change", async () => {
+        const next = new Set((state.push && state.push.muted_types) || []);
+        if (pushToggle.checked) next.delete(ct.key);
+        else next.add(ct.key);
+        try {
+          const res = await api("/api/push/preferences", {
+            method: "PUT",
+            body: JSON.stringify({ endpoint: state.push.endpoint, muted_types: [...next] }),
+          });
+          state.push = { ...res, endpoint: state.push.endpoint };
+          toast("Saved");
+          updatePushScheduleTexts();
+        } catch (err) {
+          pushToggle.checked = !pushToggle.checked;
+          toast(t("Error: ") + err.message);
+        }
+      });
+    }
+
+    // name / fields / quick actions / delete
+    card.querySelector(".ct-edit-btn").addEventListener("click", () => openChoreTypeBuilder(ct));
+    const delBtn = card.querySelector(".ct-delete-btn");
+    if (delBtn) {
+      delBtn.addEventListener("click", async () => {
+        if (!confirm(`${t("Delete")} "${t(ct.label)}"? ${t("This also deletes all of its logged events.")}`)) return;
+        await api(`/api/chore-types/${ct.key}`, { method: "DELETE" });
+        toast("Deleted");
+        openCards.delete(ct.key);
+        await loadChoreTypes();
+        await loadChoreTypesManager();
+        loadDashboard();
+      });
+    }
+    box.appendChild(card);
   });
-  el.querySelector("#comp-show-all").addEventListener("click", () => updateCompHidden([], [...c.hidden]));
+  renderCompetitionConfig();
+}
+
+// Competition section inside each card: which categories count and how hard
+// they are. A household-wide rule, kept on the server (see updateCompHidden).
+function renderCompetitionConfig() {
+  const c = state.competition;
+  const data = c.data;
+  if (!data) return;
+  document.querySelectorAll("#chore-types-manager .ct-card").forEach((card) => {
+    const el = card.querySelector(".ct-comp");
+    const ct = data.chore_types.find((x) => x.key === card.dataset.key);
+    if (!el) return;
+    if (!ct || !ct.boards.length) {
+      el.innerHTML = "";
+      return;
+    }
+    el.innerHTML = `
+      <h4>🏆 ${t("Competition")}</h4>
+      <div class="muted ct-hint">${t("Which categories count, and how hard each is (points multiplier). Applies to everyone, on every device.")}</div>
+      <div class="cfg-boards">${ct.boards
+        .map(
+          (b) => `<span class="cfg-board-wrap"><label class="cfg-board"><input type="checkbox" data-board="${b.id}" ${c.hidden.has(b.id) ? "" : "checked"}> ${t(b.label)}${b.unit && b.display !== "duration" ? ` <span class="muted">(${esc(b.unit)})</span>` : ""}</label><label class="cfg-weight" title="${t("Difficulty (points multiplier)")}">×<input type="number" min="0" max="20" step="0.5" inputmode="decimal" data-weight="${b.id}" data-default="${b.default_weight}" value="${b.weight}"></label></span>`
+        )
+        .join("")}</div>`;
+    el.querySelectorAll("[data-board]").forEach((box) => {
+      box.addEventListener("change", () => {
+        if (box.checked) updateCompHidden([], [box.dataset.board]);
+        else updateCompHidden([box.dataset.board], []);
+      });
+    });
+    el.querySelectorAll("[data-weight]").forEach((inp) => {
+      inp.addEventListener("change", async () => {
+        const raw = inp.value.trim();
+        const w = raw === "" ? null : Math.max(0, Number(raw));
+        try {
+          await api("/api/competition/weights", {
+            method: "PUT",
+            body: JSON.stringify({ weights: { [inp.dataset.weight]: w === Number(inp.dataset.default) ? null : w } }),
+          });
+          await fetchCompetitionData();
+          refreshCompetitionViews();
+        } catch (err) {
+          toast(t("Error: ") + err.message);
+        }
+      });
+    });
+    const sum = card.querySelector(".ct-sum");
+    const typeInfo = (state.allTypes || []).find((x) => x.key === card.dataset.key);
+    if (sum && typeInfo) sum.textContent = cardSummary(typeInfo);
+  });
 }
 
 // ---------- stats: overview + detail ----------
@@ -3570,52 +3775,6 @@ async function loadProfile() {
 
 const FIELD_TYPES = ["text", "number", "boolean", "select", "textarea"];
 
-async function loadChoreTypesManager() {
-  const box = document.getElementById("chore-types-manager");
-  const types = await api("/api/chore-types?include_disabled=true");
-  box.innerHTML = "";
-  types.forEach((ct, i) => {
-    const row = document.createElement("div");
-    row.className = "ct-manage-row" + (ct.enabled ? "" : " disabled");
-    row.innerHTML = `
-      <div class="ct-manage-order">
-        <button type="button" class="icon-btn" data-move="up" ${i === 0 ? "disabled" : ""}>▲</button>
-        <button type="button" class="icon-btn" data-move="down" ${i === types.length - 1 ? "disabled" : ""}>▼</button>
-      </div>
-      <div class="ct-manage-info">${ct.icon} <strong>${t(ct.label)}</strong>${ct.is_builtin ? "" : ` <span class="custom-pill">${t("custom")}</span>`}</div>
-      <div class="ct-manage-actions">
-        <label class="switch"><input type="checkbox" class="ct-enabled-toggle" ${ct.enabled ? "checked" : ""}><span class="slider"></span></label>
-        <button type="button" class="icon-btn ct-edit-btn" title="${t("Edit")}">✏️</button>
-        ${!ct.is_builtin ? `<button type="button" class="icon-btn ct-delete-btn" title="${t("Delete")}">🗑️</button>` : ""}
-      </div>`;
-    row.querySelector('[data-move="up"]').addEventListener("click", () => moveChoreType(types, i, -1));
-    row.querySelector('[data-move="down"]').addEventListener("click", () => moveChoreType(types, i, 1));
-    row.querySelector(".ct-enabled-toggle").addEventListener("change", async (e) => {
-      await api(`/api/chore-types/${ct.key}/meta`, {
-        method: "PUT",
-        body: JSON.stringify({ enabled: e.target.checked }),
-      });
-      await loadChoreTypes();
-      loadChoreTypesManager();
-      loadDashboard();
-    });
-    row.querySelector(".ct-edit-btn").addEventListener("click", () => openChoreTypeBuilder(ct));
-    const delBtn = row.querySelector(".ct-delete-btn");
-    if (delBtn) {
-      delBtn.addEventListener("click", async () => {
-        if (!confirm(`${t("Delete")} "${t(ct.label)}"? ${t("This also deletes all of its logged events.")}`)) return;
-        await api(`/api/chore-types/${ct.key}`, { method: "DELETE" });
-        toast("Deleted");
-        await loadChoreTypes();
-        loadChoreTypesManager();
-        loadSettings();
-        loadDashboard();
-      });
-    }
-    box.appendChild(row);
-  });
-}
-
 async function moveChoreType(types, index, dir) {
   const newIndex = index + dir;
   if (newIndex < 0 || newIndex >= types.length) return;
@@ -4279,6 +4438,7 @@ function scheduleSummary(schedule) {
   if (!schedule || schedule.mode === "off") return t("No reminder");
   if (schedule.mode === "interval") {
     const m = schedule.interval_minutes;
+    if (m % 1440 === 0) return `${t("Every")} ${m / 1440}${state.lang === "uk" ? " дн" : "d"}`;
     return `${t("Every")} ${m % 60 === 0 ? `${m / 60}${state.lang === "uk" ? " год" : "h"}` : `${m}${t("min")}`}`;
   }
   if (schedule.mode === "calendar_day") return t("Once per calendar day");
@@ -4327,133 +4487,16 @@ async function loadSettings() {
   await loadProfile();
   await loadPeople();
   loadPeopleSettings();
-  await loadChoreTypesManager();
+  await Promise.all([loadChoreTypesManager(), loadCompetitionConfig()]);
   await loadPushState();
   if (state.push && state.push.subscribed) await loadPushStatus();
   renderPushBox();
-  renderReminderRows();
-  loadCompetitionConfig();
+  renderTypeCards();
 }
 
 // One row per chore type: master reminder on/off, the interval, how many
 // minutes early to push, the session window (where it applies), and whether
 // *this device* gets pushes for it.
-function renderReminderRows() {
-  const list = document.getElementById("settings-list");
-  list.innerHTML = "";
-  const pushOn = !!(state.push && state.push.subscribed);
-  state.choreTypes.forEach((ct) => {
-    const hasReminder = true; // every chore type can be scheduled from here
-    const muted = new Set((state.push && state.push.muted_types) || []);
-    const row = document.createElement("div");
-    row.className = "settings-row reminder-row";
-    row.innerHTML = `
-      <div class="reminder-head">
-        <div>${ct.icon} <strong>${t(ct.label)}</strong></div>
-        ${
-          hasReminder
-            ? `<label class="switch-label"><input type="checkbox" class="reminder-toggle" ${ct.reminder_enabled ? "checked" : ""}> ${t("Reminder")}</label>`
-            : `<span style="color:var(--muted)">${t("no reminder")}</span>`
-        }
-      </div>
-      <div class="row reminder-controls ${hasReminder && !ct.reminder_enabled ? "dimmed" : ""}">
-        <div class="sched-wrap">${scheduleEditorHtml()}</div>
-        ${
-          hasReminder
-            ? `<label>${t("Notify")} <input type="number" min="0" max="1440" class="lead-input" style="width:72px" value="${ct.push_lead_minutes || 0}"> ${t("min before due")}</label>`
-            : ""
-        }
-        ${
-          ct.session_window_configurable
-            ? `<label>${t("Session window")} <input type="number" min="0" class="session-window-input" style="width:92px" value="${ct.session_window_minutes ?? ""}"> ${t("min")}</label>`
-            : ""
-        }
-        ${
-          hasReminder || ct.session_window_configurable
-            ? `<button class="btn secondary save-settings-btn">${t("Save")}</button>`
-            : ""
-        }
-        ${
-          pushOn && hasReminder
-            ? `<label class="switch-label push-toggle"><input type="checkbox" ${muted.has(ct.key) ? "" : "checked"}> 🔔 ${t("Push")}</label>`
-            : ""
-        }
-      </div>
-      ${pushOn && hasReminder ? `<div class="push-sched" data-key="${ct.key}">${pushScheduleText(ct)}</div>` : ""}`;
-
-    const editor = mountScheduleEditor(row.querySelector(".sched-wrap"), ct.schedule);
-    const reminderToggle = row.querySelector(".reminder-toggle");
-    if (reminderToggle) {
-      reminderToggle.addEventListener("change", async () => {
-        try {
-          await api(`/api/chore-types/${ct.key}/settings`, {
-            method: "PUT",
-            body: JSON.stringify({ reminder_enabled: reminderToggle.checked }),
-          });
-        } catch (err) {
-          reminderToggle.checked = !reminderToggle.checked;
-          toast(t("Error: ") + err.message);
-          return;
-        }
-        row.querySelector(".reminder-controls").classList.toggle("dimmed", !reminderToggle.checked);
-        toast("Saved");
-        await loadChoreTypes();
-        loadDashboard();
-        refreshPushStatus();
-      });
-    }
-
-    const saveBtn = row.querySelector(".save-settings-btn");
-    if (saveBtn) {
-      saveBtn.addEventListener("click", async () => {
-        const leadInput = row.querySelector(".lead-input");
-        const sessionInput = row.querySelector(".session-window-input");
-        // only send what this row actually has, so saving one never resets the other
-        const body = {};
-        const schedule = editor.get();
-        if (!schedule) {
-          toast(t("Error: ") + t("Fill in the interval or add at least one time"));
-          return;
-        }
-        if (leadInput) body.push_lead_minutes = leadInput.value !== "" ? Math.max(0, Number(leadInput.value)) : 0;
-        if (sessionInput) body.session_window_minutes = sessionInput.value !== "" ? Number(sessionInput.value) : null;
-        try {
-          await api(`/api/chore-types/${ct.key}/schedule`, { method: "PUT", body: JSON.stringify(schedule) });
-          await api(`/api/chore-types/${ct.key}/settings`, { method: "PUT", body: JSON.stringify(body) });
-        } catch (err) {
-          toast(t("Error: ") + err.message);
-          return;
-        }
-        toast("Saved");
-        await loadChoreTypes();
-        loadDashboard();
-        refreshPushStatus();
-      });
-    }
-
-    const pushToggle = row.querySelector(".push-toggle input");
-    if (pushToggle) {
-      pushToggle.addEventListener("change", async () => {
-        const next = new Set((state.push && state.push.muted_types) || []);
-        if (pushToggle.checked) next.delete(ct.key);
-        else next.add(ct.key);
-        try {
-          const res = await api("/api/push/preferences", {
-            method: "PUT",
-            body: JSON.stringify({ endpoint: state.push.endpoint, muted_types: [...next] }),
-          });
-          state.push = { ...res, endpoint: state.push.endpoint };
-          toast("Saved");
-          updatePushScheduleTexts();
-        } catch (err) {
-          pushToggle.checked = !pushToggle.checked;
-          toast(t("Error: ") + err.message);
-        }
-      });
-    }
-    list.appendChild(row);
-  });
-}
 
 // ---------- init ----------
 

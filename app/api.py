@@ -37,6 +37,7 @@ from app.schemas import (
     PersonOut,
     PersonUpdate,
     ProfileOut,
+    NudgeUpdate,
     ScheduleUpdate,
     ProfileUpdate,
     QuickActionCreate,
@@ -220,6 +221,35 @@ def _usual_minute(db: Session, ct, tz: ZoneInfo) -> int | None:
     if math.hypot(x, y) < 0.5:
         return None
     return round(math.atan2(y, x) / (2 * math.pi) * 1440) % 1440
+
+
+NUDGE_DEFAULT = {"enabled": True, "before_minutes": 45, "after_minutes": 150}
+
+
+def _nudge_cfg(db: Session, key: str) -> dict:
+    """"Usually done about now" reminders for once-a-day items: on/off and the
+    window around the usual time (minutes before / after) in which logging
+    something else triggers the question."""
+    s = db.get(Setting, f"nudge:{key}")
+    cfg = dict(NUDGE_DEFAULT)
+    if s and s.value:
+        cfg.update({k: s.value[k] for k in NUDGE_DEFAULT if k in s.value})
+    return cfg
+
+
+@router.put("/chore-types/{key}/nudge")
+def update_nudge(key: str, body: NudgeUpdate, db: Session = Depends(get_db)):
+    ct = _get_chore_type(key, db)
+    cfg = _nudge_cfg(db, ct.key)
+    if body.enabled is not None:
+        cfg["enabled"] = body.enabled
+    if body.before_minutes is not None:
+        cfg["before_minutes"] = body.before_minutes
+    if body.after_minutes is not None:
+        cfg["after_minutes"] = body.after_minutes
+    _set_setting(db, f"nudge:{ct.key}", cfg)
+    db.commit()
+    return cfg
 
 
 def _schedule_interval(schedule: dict) -> int | None:
@@ -551,6 +581,7 @@ def list_chore_types(include_disabled: bool = False, db: Session = Depends(get_d
         schedule = _schedule_for(db, ct)
         d = ct.as_dict(_schedule_interval(schedule), _session_window_minutes(db, ct))
         d["schedule"] = schedule
+        d["nudge"] = _nudge_cfg(db, ct.key)
         d["has_start_end"] = ct.has_start_end
         builtin_qa = list(d.get("quick_actions") or [])
         if ct.adaptive_amount_field:
@@ -951,9 +982,10 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
 
     usual_time = None
     done_today = False
+    nudge = _nudge_cfg(db, ct.key)
     if _once_a_day(schedule):
         done_today = bool(last_out and last_out.timestamp.astimezone(tz).date() == _now().astimezone(tz).date())
-        um = _usual_minute(db, ct, tz)
+        um = _usual_minute(db, ct, tz) if nudge["enabled"] else None
         if um is not None:
             usual_time = f"{um // 60:02d}:{um % 60:02d}"
 
@@ -982,6 +1014,8 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
         slots_today=slots_today,
         extra=extra,
         usual_time=usual_time,
+        usual_before=nudge["before_minutes"],
+        usual_after=nudge["after_minutes"],
         done_today=done_today,
     )
 
@@ -1081,8 +1115,6 @@ def competition(db: Session = Depends(get_db)):
     scores: dict[str, dict[str, dict[str, float]]] = {p: {} for p in COMPETITION_PERIODS}
     for ct in _effective_chore_types(db, enabled_only=True):
         events = db.execute(select(Event).where(Event.chore_type == ct.key)).scalars().all()
-        if not events:
-            continue  # nothing ever logged - not worth a category
 
         # "last"-aggregated fields (e.g. weight_g, height_cm) are point-in-
         # time readings, not something to sum - summing several weight

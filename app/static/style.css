@@ -1169,3 +1169,22 @@ details.field-help[open] summary { margin-bottom: 0.2rem; }
 .kpi.ok .kpi-value { color: var(--ok); }
 .kpi.low .kpi-value, .kpi.high .kpi-value { color: var(--danger); }
 .scroll-x { overflow-x: auto; }
+
+/* ---- settings: chore type cards ---- */
+.ct-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); margin-bottom: 0.6rem; overflow: hidden; }
+.ct-card.disabled .ct-card-head .ct-card-title { opacity: 0.55; }
+.ct-card-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.7rem; }
+.ct-card-title { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 0.1rem; background: none; border: none; color: var(--text); text-align: left; cursor: pointer; padding: 0.2rem 0; font: inherit; }
+.ct-card-title .ct-sum { font-size: 0.78rem; }
+.ct-caret { color: var(--muted); cursor: pointer; transition: transform 0.15s; padding: 0 0.3rem; }
+.ct-card.open .ct-caret { transform: rotate(180deg); }
+.ct-card-body { display: none; padding: 0.2rem 1rem 1rem; border-top: 1px solid var(--border); }
+.ct-card.open .ct-card-body { display: block; }
+.ct-sec { margin-top: 0.9rem; }
+.ct-sec h4 { margin: 0 0 0.35rem; font-size: 0.9rem; }
+.ct-hint { font-size: 0.78rem; margin-bottom: 0.4rem; }
+.ct-save-row { margin-top: 0.8rem; display: flex; justify-content: flex-end; }
+.ct-card .reminder-controls { display: flex; flex-direction: column; align-items: stretch; gap: 0.5rem; margin-top: 0.4rem; }
+.ct-card .reminder-controls.dimmed .sched-editor { opacity: 0.5; }
+.ct-card .cfg-boards { margin-left: 0; }
+.nudge-win { gap: 0.5rem 1rem; margin-top: 0.3rem; }
