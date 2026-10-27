@@ -159,6 +159,20 @@ class ChoreType:
             return None
         return last_timestamp + timedelta(minutes=interval_minutes)
 
+    # True if status_extra() should be called (needs recent events)
+    wants_status_extra: bool = False
+
+    def status_extra(self, recent_events: list, now: datetime) -> dict:
+        """Extra live facts for the dashboard card, from the most recent
+        events (newest first), e.g. how long the baby has been awake."""
+        return {}
+
+    def reminder_anchor(self, data: dict, timestamp: datetime) -> Optional[datetime]:
+        """The moment a reminder interval is counted from. Normally the
+        event's own time; start/end types count from when it *ended*
+        (None while still open = nothing to remind about yet)."""
+        return timestamp
+
     def last_activity(self, data: dict, fallback: datetime) -> datetime:
         """Most recent timestamp within this event, used to decide whether a
         session is still open. Defaults to the event's own timestamp."""

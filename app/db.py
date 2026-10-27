@@ -41,10 +41,31 @@ def _migrate_add_columns():
         if "person_id" not in columns:
             conn.execute(text("ALTER TABLE events ADD COLUMN person_id INTEGER REFERENCES people(id)"))
             conn.commit()
+        if "custom_chore_types" in existing_tables:
+            custom_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(custom_chore_types)"))}
+            if "has_start_end" not in custom_cols:
+                conn.execute(text("ALTER TABLE custom_chore_types ADD COLUMN has_start_end BOOLEAN DEFAULT 0"))
+                conn.commit()
+
+
+def _backup_before_upgrade():
+    """One-time safety copy of the database before the scheduling upgrade
+    touches the schema (`<db>.pre-schedules.bak`). Nothing is ever deleted or
+    rewritten by the upgrade - events and settings stay as they are - this is
+    just a belt-and-braces copy."""
+    import shutil
+
+    bak = DB_PATH + ".pre-schedules.bak"
+    if os.path.exists(DB_PATH) and os.path.getsize(DB_PATH) > 0 and not os.path.exists(bak):
+        try:
+            shutil.copy2(DB_PATH, bak)
+        except OSError:
+            pass
 
 
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    _backup_before_upgrade()
     from app import models  # noqa: F401 register models
 
     Base.metadata.create_all(bind=engine)

@@ -1,7 +1,6 @@
 import copy
 from collections import Counter, defaultdict
-import math
-from datetime import date, datetime, time as dtime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.chore_types.base import REGISTRY, ChoreType, FieldDef, FieldOption
+from app import schedule as sched
 from app.custom_types import DynamicChoreType
 from app.db import get_db
 from app.feeding_guidance import feeding_guidance
@@ -36,6 +36,7 @@ from app.schemas import (
     PersonOut,
     PersonUpdate,
     ProfileOut,
+    ScheduleUpdate,
     ProfileUpdate,
     QuickActionCreate,
     QuickActionUpdate,
@@ -60,7 +61,7 @@ def _custom_chore_type(row: CustomChoreType) -> DynamicChoreType:
         if f.get("options"):
             f["options"] = [FieldOption(**o) for o in f["options"]]
         fields.append(FieldDef(**f))
-    return DynamicChoreType(row.key, row.label, row.icon, fields, row.interval_minutes)
+    return DynamicChoreType(row.key, row.label, row.icon, fields, row.interval_minutes, bool(row.has_start_end))
 
 
 def _get_chore_type(key: str, db: Session | None = None):
@@ -178,49 +179,18 @@ def _next_due_override(db: Session, key: str, last: Event | None) -> tuple[datet
         return due, None
 
 
-HABIT_DAYS = 14  # how far back to look for a once-a-day routine
-HABIT_MIN_DAYS = 5  # ... which needs at least this many days with the event
+def _schedule_for(db: Session, ct) -> dict:
+    """The chore type's reminder schedule: what was configured in the app, or -
+    for anything never touched - exactly what it did before schedules existed
+    (its interval setting / default, or once-per-calendar-day)."""
+    s = db.get(Setting, f"schedule:{ct.key}")
+    if s and s.value and s.value.get("mode"):
+        return sched.normalize(s.value)
+    return sched.from_legacy(_interval_minutes(db, ct), ct.daily_reminder)
 
 
-def _daily_habit_minute(db: Session, ct, tz: ZoneInfo) -> int | None:
-    """Minute of the (local) day an event that happens about once a day
-    usually gets logged, or None if this isn't a daily routine. A routine =
-    logged on at least half of the last 14 days, rarely more than once a day,
-    at a fairly consistent time (so probiotic yes, water or feeding no)."""
-    if ct.has_start_end:
-        return None
-    if not (ct.daily_reminder or _interval_minutes(db, ct) is None):
-        return None  # has its own interval-based reminder
-    since = _now() - timedelta(days=HABIT_DAYS)
-    stmt = select(Event.timestamp).where(Event.chore_type == ct.key, Event.timestamp >= since)
-    days: dict[date, list[int]] = defaultdict(list)
-    for (ts,) in db.execute(stmt):
-        local = as_utc(ts).astimezone(tz)
-        days[local.date()].append(local.hour * 60 + local.minute)
-    if len(days) < max(HABIT_MIN_DAYS, HABIT_DAYS // 2):
-        return None
-    if sum(1 for v in days.values() if len(v) > 1) > 0.2 * len(days):
-        return None
-    angles = [2 * math.pi * min(v) / 1440 for v in days.values()]
-    x = sum(math.cos(a) for a in angles) / len(angles)
-    y = sum(math.sin(a) for a in angles) / len(angles)
-    if math.hypot(x, y) < 0.6:  # times all over the clock: no usual time
-        return None
-    return round(math.atan2(y, x) / (2 * math.pi) * 1440) % 1440
-
-
-def _habit_due(habit: int, last_ts: datetime | None, tz: ZoneInfo) -> tuple[datetime, datetime]:
-    """(due, armed_at): today's usual time, or tomorrow's once today's is done."""
-    now_local = _now().astimezone(tz)
-    today = now_local.date()
-
-    def at(d: date) -> datetime:
-        return datetime.combine(d, dtime(habit // 60, habit % 60), tzinfo=tz).astimezone(timezone.utc)
-
-    if last_ts is not None and last_ts.astimezone(tz).date() == today:
-        return at(today + timedelta(days=1)), last_ts
-    midnight = datetime.combine(today, dtime(0, 0), tzinfo=tz).astimezone(timezone.utc)
-    return at(today), midnight
+def _schedule_interval(schedule: dict) -> int | None:
+    return schedule.get("interval_minutes") if schedule.get("mode") == "interval" else None
 
 
 def _next_due_info(db: Session, ct, last: Event | None, tz: ZoneInfo) -> dict:
@@ -236,12 +206,13 @@ def _next_due_info(db: Session, ct, last: Event | None, tz: ZoneInfo) -> dict:
         due, set_at = override
         return {"due": due, "overridden": True, "armed_at": set_at}
     last_ts = as_utc(last.timestamp) if last else None
-    habit = _daily_habit_minute(db, ct, tz)
-    if habit is not None:
-        due, armed = _habit_due(habit, last_ts, tz)
-        return {"due": due, "overridden": False, "armed_at": armed, "habit_minute": habit}
+    if last is not None and ct.has_start_end:
+        # counted from when it ended (e.g. waking up); nothing due while it is still going
+        last_ts = ct.reminder_anchor(last.data, last_ts)
+        if last_ts is None:
+            return {"due": None, "overridden": False, "armed_at": None}
     return {
-        "due": ct.next_due(last_ts, _interval_minutes(db, ct), tz),
+        "due": sched.next_due(_schedule_for(db, ct), last_ts, _now(), tz),
         "overridden": False,
         "armed_at": last_ts,
     }
@@ -544,7 +515,10 @@ def list_chore_types(include_disabled: bool = False, db: Session = Depends(get_d
     metas = _all_chore_type_metas(db)
     result = []
     for ct in _effective_chore_types(db, enabled_only=not include_disabled):
-        d = ct.as_dict(_interval_minutes(db, ct), _session_window_minutes(db, ct))
+        schedule = _schedule_for(db, ct)
+        d = ct.as_dict(_schedule_interval(schedule), _session_window_minutes(db, ct))
+        d["schedule"] = schedule
+        d["has_start_end"] = ct.has_start_end
         builtin_qa = list(d.get("quick_actions") or [])
         if ct.adaptive_amount_field:
             builtin_qa = ct.amount_quick_actions(_ranked_amounts(db, ct))
@@ -612,6 +586,7 @@ def create_custom_chore_type(body: CustomChoreTypeCreate, db: Session = Depends(
         icon=body.icon,
         fields_json=[f.model_dump() for f in body.fields],
         interval_minutes=body.interval_minutes,
+        has_start_end=body.has_start_end,
     )
     db.add(row)
     # place new types at the end of the list
@@ -636,6 +611,8 @@ def update_custom_chore_type(key: str, body: CustomChoreTypeUpdate, db: Session 
         row.fields_json = [f.model_dump() for f in body.fields]
     if "interval_minutes" in body.model_fields_set:
         row.interval_minutes = body.interval_minutes
+    if body.has_start_end is not None:
+        row.has_start_end = body.has_start_end
     db.commit()
     return _get_chore_type(key, db).as_dict(row.interval_minutes)
 
@@ -703,6 +680,9 @@ def update_settings(key: str, body: SettingsUpdate, db: Session = Depends(get_db
             if override is not None:
                 db.delete(override)
         _set_setting(db, f"interval:{ct.key}", {"interval_minutes": body.interval_minutes})
+        current = db.get(Setting, f"schedule:{ct.key}")
+        if current and current.value and current.value.get("mode") == "interval" and body.interval_minutes:
+            _set_setting(db, f"schedule:{ct.key}", {"mode": "interval", "interval_minutes": body.interval_minutes})
     if ct.session_window_configurable and "session_window_minutes" in fields_set:
         _set_setting(
             db, f"session_window:{ct.key}", {"session_window_minutes": body.session_window_minutes}
@@ -712,10 +692,32 @@ def update_settings(key: str, body: SettingsUpdate, db: Session = Depends(get_db
     if "push_lead_minutes" in fields_set:
         _update_reminder_setting(db, ct.key, lead_minutes=body.push_lead_minutes or 0)
     db.commit()
-    d = ct.as_dict(_interval_minutes(db, ct), _session_window_minutes(db, ct))
+    schedule = _schedule_for(db, ct)
+    d = ct.as_dict(_schedule_interval(schedule), _session_window_minutes(db, ct))
+    d["schedule"] = schedule
     d["reminder_enabled"] = _reminder_enabled(db, ct.key)
     d["push_lead_minutes"] = _push_lead_minutes(db, ct.key)
     return d
+
+
+@router.put("/chore-types/{key}/schedule")
+def update_schedule(key: str, body: ScheduleUpdate, db: Session = Depends(get_db)):
+    """Set how this chore type is scheduled: no reminder, every N minutes,
+    aimed times of the day (optionally every N days), or once per calendar day."""
+    ct = _get_chore_type(key, db)
+    schedule = sched.normalize(body.model_dump())
+    if body.mode != schedule["mode"] and body.mode != "off":
+        raise HTTPException(400, "Incomplete schedule: an interval needs minutes, aimed times need at least one time")
+    _set_setting(db, f"schedule:{ct.key}", schedule)
+    # keep the older per-type interval setting in step for anything still reading it
+    if schedule["mode"] == "interval":
+        _set_setting(db, f"interval:{ct.key}", {"interval_minutes": schedule["interval_minutes"]})
+    # a new schedule takes effect right away, not shadowed by an older one-off override
+    override = db.get(Setting, f"next_due_override:{ct.key}")
+    if override is not None:
+        db.delete(override)
+    db.commit()
+    return {"schedule": schedule}
 
 
 @router.put("/chore-types/{key}/next-due", response_model=StatusOut)
@@ -859,11 +861,10 @@ def _last_true(ct, db: Session) -> dict:
 
 def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
     last = _last_event(db, ct.key)
-    interval = _interval_minutes(db, ct)
+    schedule = _schedule_for(db, ct)
+    interval = _schedule_interval(schedule)
     last_out = _event_out(ct, last, db) if last else None
-    due_info = _next_due_info(db, ct, last, tz)
-    next_due, next_due_overridden = due_info["due"], due_info["overridden"]
-    habit_minute = due_info.get("habit_minute")
+    next_due, next_due_overridden = _compute_next_due(db, ct, last, tz)
     overdue = bool(next_due and next_due < _now())
 
     active_session_event_id = None
@@ -907,6 +908,21 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
         agg = _agg_value(f, values)
         today[f.name] = round(agg, 1) if agg is not None else 0.0
 
+    slots_today: list = []
+    if schedule.get("mode") == "times" and schedule.get("every_days", 1) == 1:
+        since = _now() - timedelta(days=2)
+        stamps = db.execute(
+            select(Event.timestamp).where(Event.chore_type == ct.key, Event.timestamp >= since)
+        ).scalars().all()
+        slots_today = sched.slots_today(schedule, [as_utc(x) for x in stamps], _now(), tz)
+
+    extra: dict = {}
+    if ct.wants_status_extra:
+        recent = db.execute(
+            select(Event).where(Event.chore_type == ct.key).order_by(Event.timestamp.desc()).limit(8)
+        ).scalars().all()
+        extra = ct.status_extra(recent, _now())
+
     return StatusOut(
         chore_type=ct.key,
         label=ct.label,
@@ -914,7 +930,6 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
         last_event=last_out,
         next_due=next_due,
         next_due_overridden=next_due_overridden,
-        habit_time=(f"{habit_minute // 60:02d}:{habit_minute % 60:02d}" if habit_minute is not None else None),
         reminder_enabled=_reminder_enabled(db, ct.key),
         interval_minutes=interval,
         overdue=overdue,
@@ -922,6 +937,9 @@ def _status_for(ct, db: Session, tz: ZoneInfo) -> StatusOut:
         open_event_id=open_event_id,
         today=today,
         last_true=_last_true(ct, db),
+        schedule=schedule,
+        slots_today=slots_today,
+        extra=extra,
     )
 
 

@@ -244,6 +244,56 @@ const I18N = {
     "By category": "За категоріями",
     "Per person and total": "По людях і разом",
     "Total": "Разом",
+    "Sleep per day": "Сон за добу",
+    "typical": "типово",
+    "Average awake window": "Середнє вікно неспання",
+    "Awake windows in the typical range": "Вікон неспання у типовому діапазоні",
+    "Naps per day": "Денних снів за добу",
+    "Average sleep": "Середній сон",
+    "longest": "найдовший",
+    "Longest awake window": "Найдовше вікно неспання",
+    "Usual bedtime": "Звичний час відходу до сну",
+    "Usual wake-up": "Звичний час підйому",
+    "Regularity": "Регулярність",
+    "how steady bedtime and wake-up are": "наскільки стабільні відхід до сну і підйом",
+    "Night wake-ups": "Нічні пробудження",
+    "per night": "за ніч",
+    "Sleep diary (last days)": "Щоденник сну (останні дні)",
+    "Each row is a day, the bar is when the baby slept.": "Кожен рядок - день, смуга - коли малюк спав.",
+    "Typical day": "Типова доба",
+    "Share of each clock hour the baby is usually asleep.": "Яку частку кожної години доби малюк зазвичай спить.",
+    "Total sleep per day": "Загальний сон за добу",
+    "Shaded band: typical total for the baby's age. General guidance only, not medical advice.": "Смуга: типова тривалість для віку малюка. Лише загальна інформація, не медична порада.",
+    "Awake windows": "Вікна неспання",
+    "Time awake between two sleeps. Shaded band: typical for the baby's age; too long a window tends to mean an overtired baby.": "Час неспання між двома снами. Смуга - типове для віку; надто довге вікно часто означає перевтому.",
+    "Bedtime": "Час відходу до сну",
+    "The flatter the line, the more regular the evening routine.": "Чим рівніша лінія, тим регулярніший вечірній режим.",
+    "Wake-up time": "Час підйому",
+    "No reminder": "Без нагадування",
+    "Every N hours after the last one": "Кожні N годин після останнього",
+    "At aimed times of the day": "У задані години доби",
+    "Once per calendar day": "Раз на календарний день",
+    "Every": "Кожні",
+    "every": "кожні",
+    "hours": "год",
+    "days": "дн.",
+    "+ Add time": "+ Додати час",
+    "No aimed times yet": "Часу ще не задано",
+    "Due again after midnight, whatever time of day it was given.": "Знову актуально після півночі, незалежно від часу доби.",
+    "Fill in the interval or add at least one time": "Вкажіть інтервал або додайте хоча б один час",
+    "Aimed times today": "Заплановані часи на сьогодні",
+    "done at": "зроблено о",
+    "missed": "пропущено",
+    "upcoming": "попереду",
+    "Asleep for": "Спить уже",
+    "Awake for": "Не спить уже",
+    "awake before": "перед тим не спав",
+    "last sleep": "попередній сон",
+    "slept": "спав",
+    "Reminder schedule": "Розклад нагадувань",
+    "Has a start and an end (tracks duration, like sleep)": "Має початок і кінець (рахує тривалість, як сон)",
+    "Start from a preset": "Почати з шаблону",
+    "Blank": "Порожній",
     "Growth percentile (WHO)": "Перцентиль росту (ВООЗ)",
     "Where the baby sits among peers of the same age and sex; P50 is average, the shaded band is P15-P85.": "Де малюк серед однолітків такої ж статі; P50 - середнє значення, затінена смуга - P15-P85.",
     "Diaper": "Підгузок",
@@ -598,6 +648,23 @@ function renderBabyInfoBar(profile, statuses) {
   `;
 }
 
+// Live facts from the server for a card (sleep: how long asleep/awake, last sleep).
+function extraLinesHtml(x) {
+  if (!x || !Object.keys(x).length) return "";
+  const d = fmtDurationMinutes;
+  const parts = [];
+  if (x.sleeping_minutes != null) {
+    parts.push(`😴 ${t("Asleep for")} <b>${d(x.sleeping_minutes)}</b>`);
+    if (x.awake_before_minutes != null) parts.push(`${t("awake before")} ${d(x.awake_before_minutes)}`);
+    if (x.last_sleep_minutes != null) parts.push(`${t("last sleep")} ${d(x.last_sleep_minutes)}`);
+  } else {
+    if (x.awake_minutes != null) parts.push(`☀️ ${t("Awake for")} <b>${d(x.awake_minutes)}</b>`);
+    if (x.last_sleep_minutes != null) parts.push(`${t("slept")} ${d(x.last_sleep_minutes)}`);
+    if (x.awake_before_minutes != null) parts.push(`${t("awake before")} ${d(x.awake_before_minutes)}`);
+  }
+  return parts.length ? `<div class="since-row">${parts.map((p) => `<span>${p}</span>`).join("")}</div>` : "";
+}
+
 async function loadDashboard() {
   let [statuses, profile] = await Promise.all([api("/api/status"), api("/api/profile")]);
   if (!state.tzSynced) {
@@ -631,7 +698,9 @@ async function loadDashboard() {
 
     let dueText = "";
     let dueClass = "ok";
-    const hasReminder = s.interval_minutes != null || (ct && ct.daily_reminder) || !!s.habit_time;
+    const schedMode = (s.schedule && s.schedule.mode) || "off";
+    const dailyMode = schedMode === "calendar_day";
+    const hasReminder = schedMode !== "off";
     if (!s.reminder_enabled) {
       // switched off in Settings - say so (only for chores that have a
       // reminder to switch off), rather than silently showing nothing
@@ -639,7 +708,7 @@ async function loadDashboard() {
         dueText = `🔕 ${t("Reminder off")}`;
         dueClass = "off";
       }
-    } else if (ct && ct.daily_reminder && s.last_event && !s.next_due_overridden && !s.habit_time) {
+    } else if (dailyMode && s.last_event && !s.next_due_overridden) {
       // "once per day" reminders reset at local midnight, not 24h after the
       // last dose - a live countdown-to-midnight isn't meaningful, so show
       // "Tomorrow" once satisfied, or an overdue-by based on the last dose
@@ -659,11 +728,10 @@ async function loadDashboard() {
       dueText = `${s.overdue ? t("Overdue by") : t("Next")} ${fmtRelative(s.next_due, "in", true)} (${fmtClockTime(s.next_due)})`;
     }
     if (s.next_due_overridden && s.reminder_enabled) dueText += " ✎";
-    else if (s.habit_time && s.reminder_enabled && s.next_due) dueText += ` 🕘`; // follows the usual time of day
     // "Set alarm" - only for a real future due time (a plain interval-based
     // reminder, not the daily-reset kind, and not already overdue - there's
     // nothing to count down to at that point).
-    const showAlarm = s.next_due && !s.overdue && !(ct && ct.daily_reminder && !s.next_due_overridden && !s.habit_time);
+    const showAlarm = s.next_due && !s.overdue && !(dailyMode && !s.next_due_overridden);
     // "Change next time" - whenever there's a live reminder to adjust
     const showEditDue = s.reminder_enabled && hasReminder;
     const dueHtml = dueText
@@ -723,6 +791,17 @@ async function loadDashboard() {
         .map(([f, ts]) => `<span>${icons[f] || t(f)} ${fmtRelative(ts)}</span>`)
         .join("")}</div>`;
     }
+    let slotsHtml = "";
+    if (s.slots_today && s.slots_today.length) {
+      slotsHtml = `<div class="slots-row" title="${t("Aimed times today")}">${s.slots_today
+        .map((sl) => {
+          const cls = sl.done_at ? "done" : sl.missed ? "missed" : "";
+          const tip = sl.done_at ? `${t("done at")} ${fmtClockTime(sl.done_at)}` : sl.missed ? t("missed") : t("upcoming");
+          return `<span class="slot ${cls}" title="${tip}">${sl.done_at ? "✓ " : ""}${sl.time}</span>`;
+        })
+        .join("")}</div>`;
+    }
+    const extraHtml = extraLinesHtml(s.extra);
     let todayHtml = "";
     if (ct) {
       const parts = ct.fields
@@ -735,6 +814,8 @@ async function loadDashboard() {
       ${lastHtml}
       ${dueHtml}
       ${sinceHtml}
+      ${extraHtml}
+      ${slotsHtml}
       ${todayHtml}
       ${buttonsHtml}
     `;
@@ -2959,6 +3040,164 @@ function aheadTableHtml(data, ct, metrics) {
     </div>`;
 }
 
+// ---------- sleep analysis (stats page for sleep) ----------
+
+const clock = (min) => `${String(Math.floor((min % 1440) / 60)).padStart(2, "0")}:${String(Math.round(min % 60)).padStart(2, "0")}`;
+
+// Plain date-scaled line chart at native pixel size. points: [{ts, y, label?}];
+// band: [lo, hi] shaded reference; yFmt formats the axis; yRange fixes the axis.
+function simpleLineChart(points, { color = "var(--primary)", band = null, yFmt = (v) => v, yRange = null, h = 190, zero = false } = {}) {
+  if (!points.length) return "";
+  const padL = 46;
+  const padR = 14;
+  const padT = 14;
+  const padB = 26;
+  const xs = points.map((p) => p.ts);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs, minX + 86400000);
+  const spanDays = (maxX - minX) / 86400000;
+  const w = Math.max(340, Math.round(spanDays * (spanDays <= 30 ? 26 : 10)) + padL + padR);
+  const ys = points.map((p) => p.y).concat(band || []);
+  let lo = yRange ? yRange[0] : Math.min(...ys);
+  let hi = yRange ? yRange[1] : Math.max(...ys);
+  if (hi - lo < 1) hi = lo + 1;
+  if (!yRange) {
+    const pad = (hi - lo) * 0.12;
+    lo = zero ? 0 : lo - pad;
+    hi += pad;
+  }
+  const x = (ts) => padL + ((ts - minX) / (maxX - minX)) * (w - padL - padR);
+  const y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (h - padT - padB);
+  let svg = "";
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + ((hi - lo) * i) / 4;
+    svg += `<line x1="${padL}" x2="${w - padR}" y1="${y(v)}" y2="${y(v)}" stroke="currentColor" opacity="0.12"></line>`;
+    svg += `<text x="${padL - 6}" y="${y(v) + 3}" font-size="10" text-anchor="end" fill="currentColor" opacity="0.65">${yFmt(v)}</text>`;
+  }
+  if (band) svg += `<rect x="${padL}" width="${w - padL - padR}" y="${y(band[1])}" height="${Math.max(0, y(band[0]) - y(band[1]))}" fill="var(--ok)" opacity="0.14"></rect>`;
+  svg += `<path d="${points.map((p, i) => `${i ? "L" : "M"}${x(p.ts).toFixed(1)},${y(p.y).toFixed(1)}`).join(" ")}" fill="none" stroke="${color}" stroke-width="2"></path>`;
+  const dots = points.length <= 120;
+  points.forEach((p) => {
+    if (dots) svg += `<circle cx="${x(p.ts).toFixed(1)}" cy="${y(p.y).toFixed(1)}" r="2.8" fill="${color}"><title>${p.label || ""} ${yFmt(p.y)}</title></circle>`;
+  });
+  const ticks = Math.min(6, Math.max(1, Math.round(spanDays / 3)));
+  for (let i = 0; i <= ticks; i++) {
+    const ts = minX + ((maxX - minX) * i) / ticks;
+    svg += `<text x="${x(ts).toFixed(1)}" y="${h - 8}" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.6">${fmtShortDate(new Date(ts).toISOString().slice(0, 10))}</text>`;
+  }
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="color:inherit">${svg}</svg>`;
+}
+
+function chartBlock(title, inner, note = "") {
+  const el = document.createElement("div");
+  el.className = "chart-block";
+  el.innerHTML = `<h3>${title}</h3>${inner}${note ? `<div class="chart-ref-note">${note}</div>` : ""}`;
+  return el;
+}
+
+// 14-day sleep diary: one row per day, the 24 hours across, sleep as bars.
+function sleepDiarySvg(timeline) {
+  const rowH = 20;
+  const padL = 58;
+  const w = padL + 24 * 28 + 10;
+  const h = 18 + timeline.length * rowH + 6;
+  const x = (min) => padL + (min / 1440) * (w - padL - 10);
+  let svg = "";
+  for (let hr = 0; hr <= 24; hr += 3) {
+    svg += `<line x1="${x(hr * 60)}" x2="${x(hr * 60)}" y1="14" y2="${h - 4}" stroke="currentColor" opacity="0.14"></line>`;
+    svg += `<text x="${x(hr * 60)}" y="10" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.6">${String(hr).padStart(2, "0")}</text>`;
+  }
+  timeline.forEach((d, i) => {
+    const top = 18 + i * rowH;
+    svg += `<text x="${padL - 6}" y="${top + 13}" font-size="10" text-anchor="end" fill="currentColor" opacity="0.7">${fmtShortDate(d.date)}</text>`;
+    svg += `<rect x="${padL}" y="${top + 2}" width="${w - padL - 10}" height="${rowH - 5}" rx="3" fill="currentColor" opacity="0.05"></rect>`;
+    d.segs.forEach(([a, b]) => {
+      svg += `<rect x="${x(a).toFixed(1)}" y="${top + 2}" width="${Math.max(2, x(b) - x(a)).toFixed(1)}" height="${rowH - 5}" rx="3" fill="var(--primary)" opacity="0.85"><title>${clock(a)}-${clock(b % 1440 || 1440)}</title></rect>`;
+    });
+  });
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="color:inherit">${svg}</svg>`;
+}
+
+function hourProfileSvg(profile) {
+  const padL = 34;
+  const w = padL + 24 * 26 + 10;
+  const h = 150;
+  const x = (hr) => padL + (hr / 24) * (w - padL - 10);
+  const y = (v) => 14 + (1 - v / 100) * (h - 14 - 24);
+  let svg = "";
+  [0, 50, 100].forEach((v) => {
+    svg += `<line x1="${padL}" x2="${w - 10}" y1="${y(v)}" y2="${y(v)}" stroke="currentColor" opacity="0.14"></line>`;
+    svg += `<text x="${padL - 5}" y="${y(v) + 3}" font-size="10" text-anchor="end" fill="currentColor" opacity="0.65">${v}%</text>`;
+  });
+  const pts = profile.map((v, hr) => `${x(hr + 0.5).toFixed(1)},${y(v).toFixed(1)}`);
+  svg += `<path d="M${x(0).toFixed(1)},${y(0)} L${pts.join(" L")} L${x(24).toFixed(1)},${y(0)} Z" fill="var(--primary)" opacity="0.2"></path>`;
+  svg += `<path d="M${pts.join(" L")}" fill="none" stroke="var(--primary)" stroke-width="2"></path>`;
+  for (let hr = 0; hr <= 24; hr += 3) svg += `<text x="${x(hr)}" y="${h - 8}" font-size="10" text-anchor="middle" fill="currentColor" opacity="0.6">${String(hr).padStart(2, "0")}</text>`;
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="color:inherit">${svg}</svg>`;
+}
+
+function sleepAnalysisBlocks(data) {
+  const a = data.sleep_analysis;
+  if (!a) return [];
+  const d = fmtDurationMinutes;
+  const out = [];
+  const ref = a.ref;
+  const status = (v, lo, hi) => (v == null || lo == null ? "" : v < lo ? "low" : v > hi ? "high" : "ok");
+  const kpi = (label, value, sub = "", cls = "") =>
+    `<div class="kpi ${cls}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${sub ? `<div class="kpi-sub">${sub}</div>` : ""}</div>`;
+  const hrs = (m) => `${Math.round((m / 60) * 10) / 10}${state.lang === "uk" ? " год" : "h"}`;
+
+  const kpis = [];
+  if (a.avg_total_per_day_minutes != null)
+    kpis.push(kpi(t("Sleep per day"), hrs(a.avg_total_per_day_minutes), ref ? `${t("typical")} ${ref.total_min_h}-${ref.total_max_h}${state.lang === "uk" ? " год" : "h"}` : "", status(a.avg_total_per_day_minutes / 60, ref && ref.total_min_h, ref && ref.total_max_h)));
+  if (a.avg_awake_minutes != null)
+    kpis.push(kpi(t("Average awake window"), d(a.avg_awake_minutes), ref ? `${t("typical")} ${d(ref.awake_min)}-${d(ref.awake_max)}` : "", status(a.avg_awake_minutes, ref && ref.awake_min, ref && ref.awake_max)));
+  if (a.awake_in_range_pct != null) kpis.push(kpi(t("Awake windows in the typical range"), `${a.awake_in_range_pct}%`));
+  if (a.avg_naps_per_day != null) kpis.push(kpi(t("Naps per day"), a.avg_naps_per_day));
+  kpis.push(kpi(t("Average sleep"), d(a.avg_sleep_minutes), `${t("longest")} ${d(a.longest_sleep_minutes)}`));
+  if (a.longest_awake_minutes != null) kpis.push(kpi(t("Longest awake window"), d(a.longest_awake_minutes)));
+  if (a.bedtime) kpis.push(kpi(t("Usual bedtime"), clock(a.bedtime.mean_min), `± ${a.bedtime.sd_min} ${t("min")}`));
+  if (a.wake) kpis.push(kpi(t("Usual wake-up"), clock(a.wake.mean_min), `± ${a.wake.sd_min} ${t("min")}`));
+  if (a.regularity != null) kpis.push(kpi(t("Regularity"), `${a.regularity}/100`, t("how steady bedtime and wake-up are"), a.regularity >= 70 ? "ok" : a.regularity >= 40 ? "" : "low"));
+  if (a.avg_wakeups_per_night != null) kpis.push(kpi(t("Night wake-ups"), a.avg_wakeups_per_night, t("per night")));
+  const grid = document.createElement("div");
+  grid.className = "kpi-grid";
+  grid.innerHTML = kpis.join("");
+  out.push(grid);
+
+  if (a.timeline && a.timeline.length) out.push(chartBlock(t("Sleep diary (last days)"), `<div class="scroll-x">${sleepDiarySvg(a.timeline)}</div>`, t("Each row is a day, the bar is when the baby slept.")));
+  out.push(chartBlock(t("Typical day"), `<div class="scroll-x">${hourProfileSvg(a.hour_profile)}</div>`, t("Share of each clock hour the baby is usually asleep.")));
+
+  // the first day of the window is usually cut off mid-day, and today isn't over: leave both out
+  const full = a.per_day.filter((x) => x.total_min > 0 && x.date !== data.today).slice(1);
+  if (full.length > 1) {
+    out.push(
+      chartBlock(
+        t("Total sleep per day"),
+        `<div class="scroll-x">${simpleLineChart(full.map((x) => ({ ts: Date.parse(x.date), y: x.total_min / 60, label: fmtShortDate(x.date) })), { zero: true, band: ref ? [ref.total_min_h, ref.total_max_h] : null, yFmt: (v) => `${Math.round(v * 10) / 10}${state.lang === "uk" ? "г" : "h"}` })}</div>`,
+        ref ? t("Shaded band: typical total for the baby's age. General guidance only, not medical advice.") : ""
+      )
+    );
+  }
+  if (a.awake_windows.length > 1) {
+    out.push(
+      chartBlock(
+        t("Awake windows"),
+        `<div class="scroll-x">${simpleLineChart(a.awake_windows.map((x) => ({ ts: Date.parse(x.start), y: x.minutes, label: `${fmtShortDate(x.start.slice(0, 10))} ${clock(x.tod)}` })), { zero: true, color: "var(--ok)", band: ref ? [ref.awake_min, ref.awake_max] : null, yFmt: (v) => d(Math.round(v)) })}</div>`,
+        t("Time awake between two sleeps. Shaded band: typical for the baby's age; too long a window tends to mean an overtired baby.")
+      )
+    );
+  }
+  const nights = a.nights || [];
+  if (nights.length > 1) {
+    const bed = nights.map((n) => ({ ts: Date.parse(n.date), y: n.bedtime_min < 720 ? n.bedtime_min + 1440 : n.bedtime_min, label: fmtShortDate(n.date) }));
+    const wake = nights.map((n) => ({ ts: Date.parse(n.date) + 86400000, y: n.wake_min, label: fmtShortDate(n.date) }));
+    out.push(chartBlock(t("Bedtime"), `<div class="scroll-x">${simpleLineChart(bed, { color: "var(--primary)", yFmt: (v) => clock(v) })}</div>`, t("The flatter the line, the more regular the evening routine.")));
+    out.push(chartBlock(t("Wake-up time"), `<div class="scroll-x">${simpleLineChart(wake, { color: "var(--warn, #e8a33d)", yFmt: (v) => clock(v) })}</div>`));
+  }
+  return out;
+}
+
 // Weight and height WHO percentiles over time on one chart (shown on both pages).
 function percentileChartEl(data) {
   const gp = data.growth_percentiles || {};
@@ -3092,6 +3331,13 @@ async function loadStats(explicitKey) {
       drawn++;
     }
   });
+
+  if (s.key === "sleep") {
+    sleepAnalysisBlocks(data).forEach((el) => {
+      charts.appendChild(el);
+      drawn++;
+    });
+  }
 
   const pctChart = percentileChartEl(data);
   if (pctChart) {
@@ -3368,7 +3614,8 @@ function openChoreTypeBuilder(existing) {
       <div class="field"><label>Label</label><input type="text" id="ct-label" value="${esc(existing ? existing.label : "")}" required></div>
       <div class="field"><label>Icon (emoji)</label><input type="text" id="ct-icon" value="${esc(existing ? existing.icon : "🍼")}" required></div>
       ${!isCustomEdit ? `<div class="field"><label>Key (no spaces, used internally)</label><input type="text" id="ct-key" placeholder="e.g. tummy_time" required></div>` : ""}
-      <div class="field"><label>Reminder interval (minutes, optional)</label><input type="number" min="0" id="ct-interval" value="${existing && existing.interval_minutes != null ? existing.interval_minutes : ""}"></div>
+      <div class="field"><label>${t("Reminder schedule")}</label><div id="ct-sched">${scheduleEditorHtml()}</div></div>
+      <div class="field"><label class="switch-label"><input type="checkbox" id="ct-startend" ${existing && existing.has_start_end ? "checked" : ""}> ${t("Has a start and an end (tracks duration, like sleep)")}</label></div>
       <div class="field">
         <label>Fields</label>
         <div id="ct-fields-rows">${fieldsRowsHtml}</div>
@@ -3384,6 +3631,34 @@ function openChoreTypeBuilder(existing) {
       rowEl.querySelector(".cf-remove").addEventListener("click", () => rowEl.remove());
     }
     rowsBox.querySelectorAll(".field-builder-row").forEach(attachRemove);
+    const schedEditor = mountScheduleEditor(document.getElementById("ct-sched"), existing ? existing.schedule : { mode: "off" });
+
+    // start from one of the built-in types: copies its simple fields, icon and schedule
+    if (!existing) {
+      const presetBox = document.createElement("div");
+      presetBox.className = "field";
+      presetBox.innerHTML = `<label>${t("Start from a preset")}</label>
+        <select id="ct-preset"><option value="">${t("Blank")}</option>${state.choreTypes
+          .filter((c) => c.is_builtin)
+          .map((c) => `<option value="${c.key}">${c.icon} ${t(c.label)}</option>`)
+          .join("")}</select>`;
+      form.insertBefore(presetBox, form.firstChild);
+      presetBox.querySelector("select").addEventListener("change", (e) => {
+        const p = choreType(e.target.value);
+        if (!p) return;
+        document.getElementById("ct-label").value = t(p.label);
+        document.getElementById("ct-icon").value = p.icon;
+        document.getElementById("ct-key").value = `${p.key}_copy`;
+        document.getElementById("ct-startend").checked = !!p.has_start_end;
+        rowsBox.innerHTML = p.fields
+          .filter((f) => !f.computed && FIELD_TYPES.includes(f.type))
+          .map((f) => fieldBuilderRowHtml(f))
+          .join("");
+        rowsBox.querySelectorAll(".field-builder-row").forEach(attachRemove);
+        document.getElementById("ct-sched").innerHTML = scheduleEditorHtml();
+        Object.assign(schedEditor, mountScheduleEditor(document.getElementById("ct-sched"), p.schedule));
+      });
+    }
     document.getElementById("ct-add-field-btn").addEventListener("click", () => {
       const wrapper = document.createElement("div");
       wrapper.innerHTML = fieldBuilderRowHtml(null);
@@ -3418,21 +3693,29 @@ function openChoreTypeBuilder(existing) {
         })
         .filter(Boolean);
 
-      const intervalRaw = document.getElementById("ct-interval").value;
+      const schedule = schedEditor.get();
+      if (!schedule) {
+        toast(t("Error: ") + t("Fill in the interval or add at least one time"));
+        return;
+      }
       const body = {
         label: document.getElementById("ct-label").value,
         icon: document.getElementById("ct-icon").value,
         fields,
-        interval_minutes: intervalRaw === "" ? null : Number(intervalRaw),
+        interval_minutes: schedule.mode === "interval" ? schedule.interval_minutes : null,
+        has_start_end: document.getElementById("ct-startend").checked,
       };
 
       try {
+        let savedKey;
         if (isCustomEdit) {
+          savedKey = existing.key;
           await api(`/api/chore-types/${existing.key}/definition`, { method: "PUT", body: JSON.stringify(body) });
         } else {
-          const key = document.getElementById("ct-key").value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
-          await api("/api/chore-types", { method: "POST", body: JSON.stringify({ key, ...body }) });
+          savedKey = document.getElementById("ct-key").value.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
+          await api("/api/chore-types", { method: "POST", body: JSON.stringify({ key: savedKey, ...body }) });
         }
+        await api(`/api/chore-types/${savedKey}/schedule`, { method: "PUT", body: JSON.stringify(schedule) });
         toast("Saved");
         closeChoreTypeModal();
         await loadChoreTypes();
@@ -3831,6 +4114,109 @@ function renderPushBox() {
 }
 
 // One line under each reminder: when its push goes out, or what happened to it.
+// ---------- schedule editor (shared by Settings and the chore-type builder) ----------
+
+function scheduleEditorHtml() {
+  return `<div class="sched-editor">
+    <select class="sched-mode">
+      <option value="off">${t("No reminder")}</option>
+      <option value="interval">${t("Every N hours after the last one")}</option>
+      <option value="times">${t("At aimed times of the day")}</option>
+      <option value="calendar_day">${t("Once per calendar day")}</option>
+    </select>
+    <div class="sched-pane" data-mode="interval">
+      <label>${t("Every")} <input type="number" class="sched-int" min="0.1" step="any" style="width:80px">
+        <select class="sched-unit"><option value="60">${t("hours")}</option><option value="1">${t("min")}</option></select></label>
+    </div>
+    <div class="sched-pane" data-mode="times">
+      <div class="sched-times"></div>
+      <div class="row">
+        <input type="time" class="sched-time-new" style="width:130px">
+        <button type="button" class="btn secondary sched-time-add">${t("+ Add time")}</button>
+      </div>
+      <label class="sched-every-row">${t("Repeat every")} <input type="number" class="sched-every" min="1" max="30" value="1" style="width:64px"> ${t("days")}</label>
+    </div>
+    <div class="sched-pane muted" data-mode="calendar_day">${t("Due again after midnight, whatever time of day it was given.")}</div>
+  </div>`;
+}
+
+// Fills `root` (containing scheduleEditorHtml()) from a schedule and returns
+// {get()} giving the schedule body to PUT, or null if it's incomplete.
+function mountScheduleEditor(root, schedule) {
+  schedule = schedule || { mode: "off" };
+  const modeSel = root.querySelector(".sched-mode");
+  const intInp = root.querySelector(".sched-int");
+  const unitSel = root.querySelector(".sched-unit");
+  const timesBox = root.querySelector(".sched-times");
+  const everyInp = root.querySelector(".sched-every");
+  let times = [...(schedule.times || [])];
+
+  const showMode = () => root.querySelectorAll(".sched-pane").forEach((p) => p.classList.toggle("hidden", p.dataset.mode !== modeSel.value));
+  const drawTimes = () => {
+    times = [...new Set(times)].sort();
+    timesBox.innerHTML = times.length
+      ? times.map((x) => `<span class="time-chip">${x}<button type="button" data-t="${x}" aria-label="remove">✕</button></span>`).join("")
+      : `<span class="muted">${t("No aimed times yet")}</span>`;
+    timesBox.querySelectorAll("button").forEach((b) =>
+      b.addEventListener("click", () => {
+        times = times.filter((x) => x !== b.dataset.t);
+        drawTimes();
+      })
+    );
+  };
+
+  modeSel.value = schedule.mode || "off";
+  if (schedule.mode === "interval" && schedule.interval_minutes) {
+    const m = schedule.interval_minutes;
+    if (m % 60 === 0) {
+      unitSel.value = "60";
+      intInp.value = m / 60;
+    } else {
+      unitSel.value = "1";
+      intInp.value = m;
+    }
+  } else {
+    intInp.value = 3;
+  }
+  everyInp.value = schedule.every_days || 1;
+  modeSel.addEventListener("change", showMode);
+  root.querySelector(".sched-time-add").addEventListener("click", () => {
+    const inp = root.querySelector(".sched-time-new");
+    if (inp.value) times.push(inp.value);
+    inp.value = "";
+    drawTimes();
+  });
+  showMode();
+  drawTimes();
+
+  return {
+    get() {
+      const mode = modeSel.value;
+      if (mode === "interval") {
+        const minutes = Math.round(Number(intInp.value) * Number(unitSel.value));
+        return minutes > 0 ? { mode, interval_minutes: minutes } : null;
+      }
+      if (mode === "times") {
+        const pending = root.querySelector(".sched-time-new").value;
+        const all = pending ? [...times, pending] : times;
+        return all.length ? { mode, times: all, every_days: Math.max(1, Number(everyInp.value) || 1) } : null;
+      }
+      return { mode };
+    },
+  };
+}
+
+function scheduleSummary(schedule) {
+  if (!schedule || schedule.mode === "off") return t("No reminder");
+  if (schedule.mode === "interval") {
+    const m = schedule.interval_minutes;
+    return `${t("Every")} ${m % 60 === 0 ? `${m / 60}${state.lang === "uk" ? " год" : "h"}` : `${m}${t("min")}`}`;
+  }
+  if (schedule.mode === "calendar_day") return t("Once per calendar day");
+  const every = schedule.every_days > 1 ? ` · ${t("every")} ${schedule.every_days} ${t("days")}` : "";
+  return `${schedule.times.join(", ")}${every}`;
+}
+
 function pushScheduleText(ct) {
   const st = state.pushStatus && state.pushStatus.schedule.find((e) => e.key === ct.key);
   if (!st || !ct.reminder_enabled) return "";
@@ -3888,7 +4274,7 @@ function renderReminderRows() {
   list.innerHTML = "";
   const pushOn = !!(state.push && state.push.subscribed);
   state.choreTypes.forEach((ct) => {
-    const hasReminder = ct.interval_configurable || ct.daily_reminder;
+    const hasReminder = true; // every chore type can be scheduled from here
     const muted = new Set((state.push && state.push.muted_types) || []);
     const row = document.createElement("div");
     row.className = "settings-row reminder-row";
@@ -3902,13 +4288,7 @@ function renderReminderRows() {
         }
       </div>
       <div class="row reminder-controls ${hasReminder && !ct.reminder_enabled ? "dimmed" : ""}">
-        ${
-          ct.interval_configurable
-            ? `<label>${t("Repeat every")} <input type="number" min="0" class="interval-input" style="width:92px" value="${ct.interval_minutes ?? ""}"> ${t("min")}</label>`
-            : ct.fixed_reminder_note
-              ? `<span style="color:var(--muted)">${t(ct.fixed_reminder_note)}</span>`
-              : ""
-        }
+        <div class="sched-wrap">${scheduleEditorHtml()}</div>
         ${
           hasReminder
             ? `<label>${t("Notify")} <input type="number" min="0" max="1440" class="lead-input" style="width:72px" value="${ct.push_lead_minutes || 0}"> ${t("min before due")}</label>`
@@ -3932,6 +4312,7 @@ function renderReminderRows() {
       </div>
       ${pushOn && hasReminder ? `<div class="push-sched" data-key="${ct.key}">${pushScheduleText(ct)}</div>` : ""}`;
 
+    const editor = mountScheduleEditor(row.querySelector(".sched-wrap"), ct.schedule);
     const reminderToggle = row.querySelector(".reminder-toggle");
     if (reminderToggle) {
       reminderToggle.addEventListener("change", async () => {
@@ -3956,15 +4337,19 @@ function renderReminderRows() {
     const saveBtn = row.querySelector(".save-settings-btn");
     if (saveBtn) {
       saveBtn.addEventListener("click", async () => {
-        const intervalInput = row.querySelector(".interval-input");
         const leadInput = row.querySelector(".lead-input");
         const sessionInput = row.querySelector(".session-window-input");
         // only send what this row actually has, so saving one never resets the other
         const body = {};
-        if (intervalInput) body.interval_minutes = intervalInput.value !== "" ? Number(intervalInput.value) : null;
+        const schedule = editor.get();
+        if (!schedule) {
+          toast(t("Error: ") + t("Fill in the interval or add at least one time"));
+          return;
+        }
         if (leadInput) body.push_lead_minutes = leadInput.value !== "" ? Math.max(0, Number(leadInput.value)) : 0;
         if (sessionInput) body.session_window_minutes = sessionInput.value !== "" ? Number(sessionInput.value) : null;
         try {
+          await api(`/api/chore-types/${ct.key}/schedule`, { method: "PUT", body: JSON.stringify(schedule) });
           await api(`/api/chore-types/${ct.key}/settings`, { method: "PUT", body: JSON.stringify(body) });
         } catch (err) {
           toast(t("Error: ") + err.message);

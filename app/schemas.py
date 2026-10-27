@@ -78,8 +78,6 @@ class StatusOut(BaseModel):
     # true when next_due was set by hand for this cycle rather than derived
     # from the interval
     next_due_overridden: bool = False
-    # usual local time (HH:MM) of a once-a-day routine; next_due follows it
-    habit_time: Optional[str] = None
     reminder_enabled: bool = True
     interval_minutes: Optional[int] = None
     overdue: bool = False
@@ -88,6 +86,11 @@ class StatusOut(BaseModel):
     today: dict[str, float] = {}
     # boolean field name -> ISO time it was last true (see ChoreType.last_true_groups)
     last_true: dict[str, datetime] = {}
+    # reminder schedule (see app/schedule.py), today's aimed slots (times mode)
+    # and live facts for the card (e.g. sleep: awake for N minutes)
+    schedule: dict = {}
+    slots_today: list = []
+    extra: dict = {}
 
 
 class CompetitionWeightsUpdate(BaseModel):
@@ -172,12 +175,20 @@ class CustomFieldIn(BaseModel):
     options: Optional[list[dict]] = None  # [{value,label}]
 
 
+class ScheduleUpdate(BaseModel):
+    mode: str = "off"  # off | interval | times | calendar_day
+    interval_minutes: Optional[int] = None
+    times: list[str] = []  # "HH:MM" aimed times of the day
+    every_days: int = 1  # for `times`: every N days (1 = daily)
+
+
 class CustomChoreTypeCreate(BaseModel):
     key: str
     label: str
     icon: str
     fields: list[CustomFieldIn] = []
     interval_minutes: Optional[int] = None
+    has_start_end: bool = False
 
 
 class CustomChoreTypeUpdate(BaseModel):
@@ -185,6 +196,7 @@ class CustomChoreTypeUpdate(BaseModel):
     icon: Optional[str] = None
     fields: Optional[list[CustomFieldIn]] = None
     interval_minutes: Optional[int] = None
+    has_start_end: Optional[bool] = None
 
 
 class ChoreTypeMetaUpdate(BaseModel):

@@ -102,6 +102,8 @@ class CustomChoreType(Base):
     icon: Mapped[str] = mapped_column(String(16))
     fields_json: Mapped[list] = mapped_column(JSON, default=list)
     interval_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # logged as a start (event time) and an end (`ended_at`), with a computed duration - like sleep
+    has_start_end: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

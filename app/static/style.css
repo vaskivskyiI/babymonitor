@@ -1146,3 +1146,26 @@ details.field-help[open] summary { margin-bottom: 0.2rem; }
 .points-table td { text-align: right; white-space: nowrap; }
 .points-table td.pts-top { font-weight: 700; color: var(--primary); }
 .points-table thead th .avatar { vertical-align: middle; margin-right: 0.25rem; }
+
+/* ---- schedules ---- */
+.sched-editor { display: flex; flex-direction: column; gap: 0.5rem; flex: 1 1 100%; }
+.sched-pane { display: flex; flex-direction: column; gap: 0.4rem; }
+.sched-pane.hidden { display: none; }
+.sched-times { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.time-chip { display: inline-flex; align-items: center; gap: 0.2rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 0.15rem 0.3rem 0.15rem 0.7rem; font-weight: 600; font-size: 0.9rem; }
+.time-chip button { border: none; background: none; color: var(--muted); cursor: pointer; min-width: 28px; min-height: 28px; font-size: 0.8rem; }
+.sched-wrap { flex: 1 1 100%; }
+.slots-row { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.15rem 0; }
+.slot { font-size: 0.74rem; padding: 0.1rem 0.45rem; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.slot.done { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.slot.missed { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+
+/* ---- sleep analysis ---- */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.6rem; margin-bottom: 1rem; }
+.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm, 12px); padding: 0.6rem 0.75rem; box-shadow: var(--shadow-sm); }
+.kpi-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.kpi-value { font-size: 1.25rem; font-weight: 700; margin-top: 0.1rem; }
+.kpi-sub { font-size: 0.74rem; color: var(--muted); margin-top: 0.1rem; }
+.kpi.ok .kpi-value { color: var(--ok); }
+.kpi.low .kpi-value, .kpi.high .kpi-value { color: var(--danger); }
+.scroll-x { overflow-x: auto; }
